@@ -1,0 +1,23 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Coverage directory used by tools like istanbul
+coverage
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+node_modules/
+
+# dotenv environment variables file
+*.env
+
+# Misc
+dist/
+reports/
+tmp/
+yarn.lock
+.DS_Store

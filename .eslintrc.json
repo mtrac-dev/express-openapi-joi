@@ -1,0 +1,39 @@
+{
+  "root": true,
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "project": "tsconfig.json"
+  },
+  "parser": "@typescript-eslint/parser",
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/strict-type-checked",
+    "plugin:@typescript-eslint/stylistic-type-checked",
+    "plugin:import-x/recommended",
+    "plugin:import-x/typescript",
+    "plugin:sonarjs/recommended-legacy",
+    "plugin:prettier/recommended"
+  ],
+  "ignorePatterns": ["dist"],
+  "plugins": ["import-x", "prettier", "sonarjs"],
+  "rules": {
+    "prettier/prettier": "error",
+    "import-x/extensions": [
+      "error",
+      "ignorePackages",
+      {
+        "checkTypeImports": true,
+        "fix": true
+      }
+    ],
+    "import-x/no-named-as-default": "off",
+    "import-x/no-named-as-default-member": "off",
+    "sonarjs/todo-tag": "warn"
+  },
+  "settings": {
+    "import-x/resolver": {
+      "typescript": true
+    }
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "name": "@mtrac/express-openapi-joi",
+  "version": "0.1.0",
+  "description": "Generate OpenAPI documents from Express routes validated with Joi",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run build:cjs:pkg",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:cjs:pkg": "echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
+    "lint": "ESLINT_USE_FLAT_CONFIG=false eslint --ext .ts .",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check-coverage": "c8 check-coverage",
+    "report": "c8 report",
+    "test": "c8 mocha test",
+    "test:unit": "mocha test",
+    "test:watch": "mocha test --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mtrac-dev/express-openapi-joi.git"
+  },
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
+  "keywords": [
+    "express",
+    "openapi",
+    "joi",
+    "swagger",
+    "typescript"
+  ],
+  "author": "Michael Tracy <mike@mtrac.dev>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mtrac-dev/express-openapi-joi/issues"
+  },
+  "homepage": "https://github.com/mtrac-dev/express-openapi-joi#readme",
+  "peerDependencies": {
+    "express": "^4.19.0 || ^5.0.0",
+    "joi": "^17.0.0"
+  },
+  "dependencies": {
+    "openapi3-ts": "^4.6.1"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.6",
+    "@types/chai": "^5.2.3",
+    "@types/express": "^5.0.5",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.13.3",
+    "@types/sinon": "^21.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "c8": "^11.0.0",
+    "chai": "^5.3.3",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import-x": "^4.16.2",
+    "eslint-plugin-prettier": "^5.5.5",
+    "eslint-plugin-sonarjs": "^4.0.2",
+    "express": "^5.1.0",
+    "joi": "^17.13.3",
+    "mocha": "^11.7.5",
+    "mocha-junit-reporter": "^2.2.0",
+    "mocha-multi-reporters": "^1.5.1",
+    "prettier": "^3.8.1",
+    "sinon": "^21.0.2",
+    "ts-node": "^10.9.2",
+    "typescript": "5.9.3"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "trailingComma": "es5"
+  },
+  "mocha": {
+    "import": [
+      "ts-node/esm"
+    ],
+    "reporter": "mocha-multi-reporters",
+    "reporterOptions": "configFile=test/config.json",
+    "exit": true,
+    "extension": [
+      ".spec.ts"
+    ],
+    "recursive": true,
+    "timeout": 6000
+  },
+  "c8": {
+    "statements": 100,
+    "branches": 90,
+    "functions": 100,
+    "lines": 100,
+    "include": [
+      "src/**/*.ts"
+    ],
+    "reporter": [
+      "html",
+      "lcov",
+      "text",
+      "text-summary"
+    ],
+    "require": [
+      "ts-node/register/transpile-only"
+    ],
+    "report-dir": "./reports/coverage",
+    "cache": true,
+    "all": true
+  }
+}
