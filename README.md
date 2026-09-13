@@ -5,11 +5,12 @@ Generates OpenAPI 3 documents from Express routes validated with Joi.
 ## Status
 
 Core generator is in place: `defineRoute` registers an Express route and its
-Joi schemas in one call, `createRouteRegistry()` binds it to an isolated
-registry, and `buildOpenApiDocument`/`createOpenApiRouter` build and serve the
-resulting OpenAPI 3.1 document (paths, path/query/header parameters, request
-bodies, responses, and security schemes, merged correctly across routes that
-share a docPath+method).
+Joi schemas in one call against the library's default registry, and
+`buildOpenApiDocument`/`createOpenApiRouter` build and serve the resulting
+OpenAPI 3.1 document (paths, path/query/header parameters, request bodies,
+responses, and security schemes, merged correctly across routes that share a
+docPath+method). `createRouteRegistry()` is also available directly, for an
+isolated registry instead of the default shared one.
 
 See `src/index.ts` for the full public API.
 
@@ -24,15 +25,19 @@ project already uses.
 
 ## Usage
 
-Create one registry per app (or per test), register routes against it with
-`defineRoute`, then serve the generated document with `createOpenApiRouter`:
+Import `defineRoute` and `routeRegistry` directly -- most apps only need one,
+process-wide registry, and these are bound to the library's default instance
+already. Register routes against it with `defineRoute`, then serve the
+generated document with `createOpenApiRouter`:
 
 ```ts
 import express from 'express';
 import Joi from 'joi';
-import { createRouteRegistry, createOpenApiRouter } from '@mtrac/express-openapi-joi';
-
-const { defineRoute, routeRegistry } = createRouteRegistry();
+import {
+  defineRoute,
+  routeRegistry,
+  createOpenApiRouter,
+} from '@mtrac/express-openapi-joi';
 
 const widgetsRouter = express.Router();
 defineRoute(widgetsRouter, {
@@ -62,7 +67,7 @@ app.use(
     // Optional: gate the document the same way any other internal route
     // is gated in this app (an API-key check, auth middleware, ...).
     middleware: [myApiKeyAuthMiddleware],
-  }),
+  })
 );
 ```
 
@@ -97,8 +102,22 @@ app.use(
     version: '1.0.0',
     routeRegistry,
     securitySchemes: SECURITY_SCHEMES,
-  }),
+  })
 );
+```
+
+### Isolated registries
+
+Reach for `createRouteRegistry()` instead of the default `defineRoute`/
+`routeRegistry` export when you genuinely need more than one registry in a
+single process -- every test in this repo does exactly that, so each test
+gets its own empty registry with no cleanup required between tests:
+
+```ts
+import { createRouteRegistry } from '@mtrac/express-openapi-joi';
+
+const { defineRoute, routeRegistry, buildOpenApiDocument } =
+  createRouteRegistry();
 ```
 
 ### Swapping into an app that already hand-rolls this (e.g. registry.ts/security.ts/openapiRouter.ts)
@@ -106,9 +125,11 @@ app.use(
 If an app already has its own local `defineRoute`/`buildOpenApiDocument`
 implementation, the usual shape after adopting this package is:
 
-- **`registry.ts`** — replace the local `createRouteRegistry`/`defineRoute`
-  implementation with `export const { defineRoute, routeRegistry } =
-  createRouteRegistry();` from this package.
+- **`registry.ts`** — delete it. Every router file that imported
+  `defineRoute`/`routeRegistry` from it can import those directly from this
+  package instead (`export { defineRoute, routeRegistry } from
+'@mtrac/express-openapi-joi';` there too, if you'd rather keep the
+  existing import path unchanged everywhere else).
 - **`security.ts`** — keep the app's own `SECURITY_SCHEMES` const (this
   package doesn't know your schemes), but import `securedBy`/
   `inferSecurity`/`mergeSecurity` and the `SecurityScheme`/
@@ -116,7 +137,7 @@ implementation, the usual shape after adopting this package is:
   instead of defining them locally.
 - **`openapiRouter.ts`** — replace the hand-rolled router with
   `createOpenApiRouter({ title, version, routeRegistry, securitySchemes:
-  SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
+SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
 
 Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
 imported) just needs its import path repointed at this package -- the
