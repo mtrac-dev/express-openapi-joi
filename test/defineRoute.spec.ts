@@ -7,8 +7,16 @@ import type { Provider } from '../src/provider.ts';
 import { testRequest } from './helpers/request.ts';
 
 describe('UNIT: defineRoute', () => {
+  // routeRegistry is a single shared, module-level array -- other spec
+  // files (e.g. openApiRouter.spec.ts) read it through buildOpenApiDocument.
+  // Truncate back to the length recorded before each test, not to zero --
+  // wiping it outright would leak into whichever spec file runs next.
+  let initialLength: number;
   beforeEach(() => {
-    routeRegistry.length = 0;
+    initialLength = routeRegistry.length;
+  });
+  afterEach(() => {
+    routeRegistry.length = initialLength;
   });
 
   it('infers path params from a string-literal path, with no explicit Params argument', async () => {
@@ -221,8 +229,8 @@ describe('UNIT: defineRoute', () => {
       handler: (_req, res) => res.status(200).json([]),
     });
 
-    expect(routeRegistry).to.have.lengthOf(1);
-    expect(routeRegistry[0]).to.include({
+    expect(routeRegistry).to.have.lengthOf(initialLength + 1);
+    expect(routeRegistry.at(-1)).to.include({
       method: 'get',
       docPath: '/widgets',
       summary: 'List widgets',
