@@ -4,6 +4,7 @@ import { expect } from 'chai';
 
 import { createRouteRegistry } from '../src/defineRoute.ts';
 import { createOpenApiRouter } from '../src/openApiRouter.ts';
+import { securedBy } from '../src/security.ts';
 import { testRequest } from './helpers/request.ts';
 
 describe('UNIT: createOpenApiRouter', () => {
@@ -141,6 +142,28 @@ describe('UNIT: createOpenApiRouter', () => {
         request: { headers: Joi.string() },
         handler: (_req, res) => res.status(200).json([]),
       });
+      const apiKeyAuth = securedBy<express.RequestHandler>(
+        (_req, _res, next) => {
+          next();
+        },
+        'ApiKeyAuth'
+      );
+      defineRoute(router, {
+        method: 'get',
+        path: '/gizmos',
+        docPath: '/gizmos',
+        summary: 'List gizmos, as an admin',
+        middleware: [apiKeyAuth],
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/gizmos',
+        docPath: '/gizmos',
+        summary: 'List gizmos',
+        security: ['public'],
+        handler: (_req, res) => res.status(200).json([]),
+      });
 
       appWithRoutes.use(
         '/openapi.json',
@@ -148,6 +171,9 @@ describe('UNIT: createOpenApiRouter', () => {
           title: 'test-api',
           version: '1.0.0',
           routeRegistry,
+          securitySchemes: {
+            ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
+          },
         })
       );
     });
@@ -247,6 +273,23 @@ describe('UNIT: createOpenApiRouter', () => {
           required: false,
           schema: { type: 'string' },
         },
+      ]);
+    });
+
+    it('embeds the caller-supplied securitySchemes verbatim', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      expect(res.body.components.securitySchemes).to.eql({
+        ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
+      });
+    });
+
+    it("merges a shared docPath+method's security alternatives into one array, from both securedBy-tagged middleware and explicit security", async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      expect(res.body.paths['/gizmos'].get.security).to.have.deep.members([
+        { ApiKeyAuth: [] },
+        {},
       ]);
     });
   });

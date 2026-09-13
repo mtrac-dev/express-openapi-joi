@@ -9,6 +9,7 @@ import {
 } from './validators.ts';
 import { buildOpenApiDocument } from './document.ts';
 import type { Provider } from './provider.ts';
+import { inferSecurity, type SecurityRequirement } from './security.ts';
 
 /**
  * Extracts `:name` segments from an Express path STRING literal type into a
@@ -124,6 +125,22 @@ export interface RouteDef<
    */
   params?: ParamNames;
   /**
+   * Which of this route's alternatives satisfy access, as OpenAPI would
+   * describe it -- e.g. `['ApiKeyAuth']` (a key required), `['ApiKeyAuth',
+   * 'public']` (optional), or `['public']` (a registration with no gate
+   * of its own). Merged across every registration sharing a
+   * docPath+method, not overwritten, since later branches often accept
+   * different alternatives than the first. Middleware tagged via
+   * `securedBy` (see ./security.ts) contributes to this automatically;
+   * state it explicitly for anything else, the same way
+   * `operationId`/`docPath` sometimes need to be. A route gated by
+   * something deliberately not modeled as a security scheme should state
+   * nothing at all, rather than claim `public` -- leaving `security`
+   * unstated is how "this axis isn't documented" gets represented,
+   * distinct from "verified open".
+   */
+  security?: SecurityRequirement[];
+  /**
    * Same providers you'd pass to a provideAll()-style combinator today --
    * `Locals` is inferred from their combined Provider<L> type, so
    * res.locals is typed in `handler` without restating it. A plain
@@ -194,11 +211,15 @@ export function createRouteRegistry() {
         `defineRoute: ${def.method.toUpperCase()} ${def.path} needs either docPath or prefix`
       );
     }
+    const security = [
+      ...new Set([...(def.security ?? []), ...inferSecurity(def.middleware)]),
+    ];
 
     routeRegistry.push({
       ...def,
       operationId,
       docPath,
+      security,
     } as unknown as AnyRouteDef);
 
     const validators = [
@@ -232,7 +253,8 @@ export function createRouteRegistry() {
   return {
     defineRoute,
     routeRegistry,
-    buildOpenApiDocument: (options: { title: string; version: string }) =>
-      buildOpenApiDocument(routeRegistry, options),
+    buildOpenApiDocument: (
+      options: Parameters<typeof buildOpenApiDocument>[1]
+    ) => buildOpenApiDocument(routeRegistry, options),
   };
 }

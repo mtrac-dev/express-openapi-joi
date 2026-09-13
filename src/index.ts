@@ -6,3 +6,11 @@ export {
   type AnyRouteDef,
 } from './defineRoute.ts';
 export { type Provider } from './provider.ts';
+export {
+  securedBy,
+  inferSecurity,
+  mergeSecurity,
+  type SecurityScheme,
+  type SecurityRequirement,
+  type SecurityRequirementObject,
+} from './security.ts';

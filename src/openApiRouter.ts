@@ -14,12 +14,15 @@ export function createOpenApiRouter({
   title,
   version,
   routeRegistry,
+  securitySchemes,
   middleware = [],
 }: {
   title: string;
   version: string;
   /** The registry returned by createRouteRegistry() (see ./defineRoute.ts). */
   routeRegistry: readonly AnyRouteDef[];
+  /** Embedded verbatim into the document's components.securitySchemes. */
+  securitySchemes?: Record<string, unknown>;
   /**
    * Gates this route however the caller's own app gates any other
    * internal endpoint (an API key check, an auth middleware, etc.) --
@@ -33,7 +36,11 @@ export function createOpenApiRouter({
   let cachedDocument: ReturnType<typeof buildOpenApiDocument> | undefined;
 
   router.get('/', ...middleware, (_req, res) => {
-    cachedDocument ??= buildOpenApiDocument(routeRegistry, { title, version });
+    cachedDocument ??= buildOpenApiDocument(routeRegistry, {
+      title,
+      version,
+      securitySchemes,
+    });
     res.set('Cache-Control', 'public, max-age=3600');
     res.status(200).json(cachedDocument);
   });

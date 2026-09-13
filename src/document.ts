@@ -1,11 +1,13 @@
 import joiToJsonImport from 'joi-to-json';
 
 import type { AnyRouteDef } from './defineRoute.ts';
+import { mergeSecurity, type SecurityRequirementObject } from './security.ts';
 
 export interface OpenApiDocument {
   openapi: string;
   info: { title: string; version: string };
   paths: Record<string, Record<string, unknown>>;
+  components: { securitySchemes: Record<string, unknown> };
 }
 
 interface JsonSchema {
@@ -181,7 +183,15 @@ function responses(
  */
 export function buildOpenApiDocument(
   routeRegistry: readonly AnyRouteDef[],
-  { title, version }: { title: string; version: string }
+  {
+    title,
+    version,
+    securitySchemes = {},
+  }: {
+    title: string;
+    version: string;
+    securitySchemes?: Record<string, unknown>;
+  }
 ): OpenApiDocument {
   const paths: OpenApiDocument['paths'] = {};
 
@@ -191,6 +201,22 @@ export function buildOpenApiDocument(
       ...(pathParameters(route.docPath, route.request?.params) ?? []),
       ...(queryParameters(route.request?.query) ?? []),
     ];
+
+    // TS's Record indexing doesn't type an absent key as `undefined`
+    // (that needs noUncheckedIndexedAccess), so the cast here states
+    // explicitly what's actually true at runtime for a docPath+method
+    // not seen before: paths[route.docPath] itself, and then its
+    // [route.method] entry, can each genuinely be missing.
+    const existingOperation = paths[route.docPath] as
+      Record<string, { security?: unknown }> | undefined;
+    const existingSecurity = existingOperation?.[route.method]?.security as
+      SecurityRequirementObject[] | undefined;
+    const security = mergeSecurity(existingSecurity, route.security);
+    // A merged result of just `[{}]` ("public" and nothing else) is the
+    // same as no security requirement at all -- omit the key entirely
+    // rather than clutter every undocumented route with a redundant one.
+    const isOnlyPublic =
+      security.length === 1 && Object.keys(security[0]).length === 0;
 
     paths[route.docPath] ??= {};
     paths[route.docPath][route.method] = {
@@ -206,6 +232,7 @@ export function buildOpenApiDocument(
         },
       }),
       responses: responses(route.responses ?? { 200: { description: 'OK' } }),
+      ...(security.length > 0 && !isOnlyPublic && { security }),
     };
   }
 
@@ -213,5 +240,6 @@ export function buildOpenApiDocument(
     openapi: '3.1.0',
     info: { title, version },
     paths,
+    components: { securitySchemes },
   };
 }
