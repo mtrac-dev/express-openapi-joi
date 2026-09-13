@@ -299,6 +299,25 @@ function parameterKey(p: ParameterObject) {
 }
 
 /**
+ * Same idea as mergeRequestBody's oneOf-wrap, but for one parameter's own
+ * schema: without this, mergeParameters below would silently keep
+ * whichever registration's schema it happened to see first for a given
+ * name+location, even when a later registration in the same docPath+method
+ * stack validates that parameter differently (e.g. one registration's
+ * `:id` is a UUID string, another's is a plain number) -- discarding that
+ * registration's schema entirely rather than documenting both.
+ */
+function mergeParameterSchema(
+  prior: SchemaObject,
+  incoming: SchemaObject
+): SchemaObject {
+  if (stableStringify(prior) === stableStringify(incoming)) return prior;
+
+  const priorVariants = prior.oneOf ?? [prior];
+  return { oneOf: [...priorVariants, incoming] };
+}
+
+/**
  * Unions parameters across every defineRoute registration sharing a
  * docPath+method, rather than letting the last one silently overwrite the
  * others -- the same problem `security` was already merged for, just for
@@ -306,7 +325,10 @@ function parameterKey(p: ParameterObject) {
  * registration requires it: a caller who doesn't know in advance which
  * one will actually run (that's a server-side decision, e.g. which
  * auth/role branch applies) is safer over-providing a param some
- * registrations don't need than omitting one another requires.
+ * registrations don't need than omitting one another requires. A
+ * differing `schema` for the same name+location also merges (see
+ * mergeParameterSchema above), rather than only `required` being
+ * reconciled and a later registration's own schema silently discarded.
  */
 function mergeParameters(
   existing: ParameterObject[],
@@ -319,7 +341,17 @@ function mergeParameters(
     merged.set(
       key,
       prior
-        ? { ...prior, required: Boolean(prior.required) || Boolean(p.required) }
+        ? {
+            ...prior,
+            required: Boolean(prior.required) || Boolean(p.required),
+            // ParameterObject.schema is optional per spec, but
+            // pathParameters/queryParameters/headerParameters (the only
+            // builders of a ParameterObject in this module) always set one.
+            schema: mergeParameterSchema(
+              prior.schema as SchemaObject,
+              p.schema as SchemaObject
+            ),
+          }
         : p
     );
   }

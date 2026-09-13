@@ -262,6 +262,24 @@ describe('UNIT: createOpenApiRouter', () => {
       });
       defineRoute(router, {
         method: 'get',
+        path: '/knobs/:id',
+        docPath: '/knobs/{id}',
+        summary: 'Get a knob, as an admin',
+        request: { params: Joi.object({ id: Joi.string().uuid().required() }) },
+        handler: (_req, res) => res.status(200).json({}),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/knobs/:id',
+        docPath: '/knobs/{id}',
+        summary: 'Get a knob',
+        // Same param, same location, validated differently -- should
+        // document both, not silently keep only the first-seen schema.
+        request: { params: Joi.object({ id: Joi.number().required() }) },
+        handler: (_req, res) => res.status(200).json({}),
+      });
+      defineRoute(router, {
+        method: 'get',
         path: '/doohickeys',
         docPath: '/doohickeys',
         summary: 'List doohickeys',
@@ -475,6 +493,18 @@ describe('UNIT: createOpenApiRouter', () => {
       const { schema } =
         res.body.paths['/cogs'].post.requestBody.content['application/json'];
       expect(schema.oneOf).to.be.undefined;
+    });
+
+    it('wraps a shared parameter in oneOf when registrations validate it with different schemas', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const idParam = res.body.paths['/knobs/{id}'].get.parameters.find(
+        (p: { name: string }) => p.name === 'id'
+      );
+      expect(idParam.schema.oneOf).to.have.deep.members([
+        { type: 'string', format: 'uuid' },
+        { type: 'number' },
+      ]);
     });
 
     it('keeps an earlier summary when a later registration sharing the docPath+method gives none', async () => {
