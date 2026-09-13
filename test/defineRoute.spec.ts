@@ -219,6 +219,55 @@ describe('UNIT: defineRoute', () => {
     expect((await request.get('/widgets/not-a-uuid')).statusCode).to.equal(400);
   });
 
+  it("defaults operationId to the handler's own function name", () => {
+    const router = express.Router();
+    defineRoute(router, {
+      method: 'get',
+      path: '/',
+      docPath: '/widgets',
+      handler: function listWidgets(_req, res) {
+        res.status(200).json([]);
+      },
+    });
+
+    expect(routeRegistry.at(-1)).to.include({ operationId: 'listWidgets' });
+  });
+
+  it('overrides the handler-name default when operationId is given explicitly', () => {
+    const router = express.Router();
+    defineRoute(router, {
+      method: 'get',
+      path: '/',
+      docPath: '/widgets',
+      operationId: 'listAllWidgets',
+      handler: function listWidgets(_req, res) {
+        res.status(200).json([]);
+      },
+    });
+
+    expect(routeRegistry.at(-1)).to.include({ operationId: 'listAllWidgets' });
+  });
+
+  it('leaves operationId undefined for an anonymous handler with no explicit override', () => {
+    const router = express.Router();
+    // Array indirection defeats JS's name inference for an anonymous
+    // function expression -- passed directly as `handler: (req, res) => {}`,
+    // it would otherwise infer the property key ("handler") as its name.
+    const [anonymousHandler] = [
+      (_req: express.Request, res: express.Response) =>
+        res.status(200).json([]),
+    ];
+
+    defineRoute(router, {
+      method: 'get',
+      path: '/',
+      docPath: '/widgets',
+      handler: anonymousHandler,
+    });
+
+    expect(routeRegistry.at(-1)?.operationId).to.be.undefined;
+  });
+
   it('pushes the route definition into routeRegistry for later OpenAPI-document generation', () => {
     const router = express.Router();
     defineRoute(router, {

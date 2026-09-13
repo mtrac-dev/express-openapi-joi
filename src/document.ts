@@ -80,6 +80,7 @@ export function buildOpenApiDocument({
   for (const route of routeRegistry) {
     paths[route.docPath] ??= {};
     paths[route.docPath][route.method] = {
+      operationId: route.operationId,
       summary: route.summary,
       tags: route.tags,
       parameters: pathParameters(route.docPath, route.request?.params),

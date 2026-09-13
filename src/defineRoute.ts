@@ -45,6 +45,16 @@ export interface RouteDef<
    * as the real mount path used to reach this router.
    */
   docPath: string;
+  /**
+   * OpenAPI operationId -- generated clients (openapi-generator-cli's
+   * typescript-fetch, in particular) name their methods from this when
+   * present. Without it, method names get auto-derived from path+method
+   * and are much less usable (e.g. `widgetsIdPost`). Defaults to
+   * `handler`'s own function name when omitted -- only needed when
+   * `handler` is anonymous, or shared across registrations that want
+   * different operationIds.
+   */
+  operationId?: string;
   summary?: string;
   tags?: string[];
   /** Runtime Joi validation, same as bodyValidator/etc. today. */
@@ -86,14 +96,13 @@ export function defineRoute<
   Body extends Schema | undefined = undefined,
   Query extends Schema | undefined = undefined,
 >(router: express.Router, def: RouteDef<Path, Locals, Body, Query>) {
-  routeRegistry.push(
-    def as unknown as RouteDef<
-      string,
-      object,
-      Schema | undefined,
-      Schema | undefined
-    >
-  );
+  const operationId = def.operationId ?? (def.handler.name || undefined);
+  routeRegistry.push({ ...def, operationId } as unknown as RouteDef<
+    string,
+    object,
+    Schema | undefined,
+    Schema | undefined
+  >);
 
   const validators = [
     def.request?.params && paramValidator(def.request.params),
