@@ -31,6 +31,26 @@ describe('UNIT: defineRoute', () => {
     expect(res.body).to.eql({ id: 'abc' });
   });
 
+  it('registers directly on an Express app, not just a Router', async () => {
+    const { defineRoute } = createRouteRegistry();
+    const app = express();
+
+    defineRoute(app, {
+      method: 'get',
+      path: '/widgets/:id',
+      docPath: '/widgets/{id}',
+      handler: (req, res) => {
+        const { id } = req.params;
+        res.status(200).json({ id });
+      },
+    });
+
+    const res = await testRequest(app).get('/widgets/abc');
+
+    expect(res.statusCode).to.equal(200);
+    expect(res.body).to.eql({ id: 'abc' });
+  });
+
   it('validates the body against a Joi schema, matching bodyValidator behavior', async () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();

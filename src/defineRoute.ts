@@ -189,6 +189,12 @@ export function createRouteRegistry() {
    * Registers a route (and its schemas) in one call -- both the real
    * Express registration and the metadata buildOpenApiDocument reads back
    * from routeRegistry.
+   *
+   * Takes `express.IRouter`, not `express.Router` -- the interface both
+   * `Router` and `Application` actually extend, so this works identically
+   * whether routes are declared on a per-feature router or directly on
+   * `app` for a project that doesn't split routes into separate router
+   * files at all.
    */
   function defineRoute<
     Path extends string,
@@ -197,7 +203,7 @@ export function createRouteRegistry() {
     Query extends Schema | undefined = undefined,
     ParamNames extends readonly string[] = [],
   >(
-    router: express.Router,
+    router: express.IRouter,
     def: RouteDef<Path, Locals, Body, Query, ParamNames>
   ) {
     const operationId = def.operationId ?? (def.handler.name || undefined);
