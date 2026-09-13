@@ -384,6 +384,30 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)?.operationId).to.be.undefined;
   });
 
+  it('leaves operationId undefined for a bare inline handler, rather than colliding every such route onto the inferred name "handler"', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
+    const router = express.Router();
+
+    // The everyday call style used everywhere else in this file and the
+    // README -- JS infers the object property key itself ("handler") as
+    // this function's own .name, not a real function name.
+    defineRoute(router, {
+      method: 'get',
+      path: '/',
+      docPath: '/widgets',
+      handler: (_req, res) => res.status(200).json([]),
+    });
+    defineRoute(router, {
+      method: 'get',
+      path: '/',
+      docPath: '/gadgets',
+      handler: (_req, res) => res.status(200).json([]),
+    });
+
+    expect(routeRegistry.at(-2)?.operationId).to.be.undefined;
+    expect(routeRegistry.at(-1)?.operationId).to.be.undefined;
+  });
+
   it('pushes the route definition into routeRegistry for later OpenAPI-document generation', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();

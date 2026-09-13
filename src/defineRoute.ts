@@ -93,6 +93,20 @@ export interface RouteDef<
    * `handler`'s own function name when omitted -- only needed when
    * `handler` is anonymous, or shared across registrations that want
    * different operationIds.
+   *
+   * "Anonymous" is a narrower case than it looks: an arrow function
+   * assigned directly as `handler: (req, res) => {...}` (the everyday
+   * call style, including everywhere else in this file's own examples) is
+   * NOT anonymous to JS -- it infers the property key itself, `"handler"`,
+   * as the function's `.name`. Every route defined that way would
+   * otherwise collide onto the literal operationId `"handler"`. defineRoute
+   * treats that one specific inferred name as if it were still anonymous
+   * (see below) to avoid that, but a handler assigned some OTHER way that
+   * happens to infer a different property/variable name (e.g. as a plain
+   * object's `get:` method rather than `handler:`) isn't covered by that
+   * check and would still collide silently. State `operationId` explicitly
+   * whenever a handler isn't a `function name(...)` declaration or a bare
+   * `handler: (...) => {...}` assignment.
    */
   operationId?: string;
   summary?: string;
@@ -206,7 +220,16 @@ export function createRouteRegistry() {
     router: express.IRouter,
     def: RouteDef<Path, Locals, Body, Query, ParamNames>
   ) {
-    const operationId = def.operationId ?? (def.handler.name || undefined);
+    // A bare `handler: (req, res) => {...}` (the call style used
+    // everywhere else in this file's own examples) isn't anonymous to
+    // JS -- it infers the object property key itself, "handler", as the
+    // function's own `.name`. Treating that one specific inferred name as
+    // if it were still anonymous is what keeps every route defined that
+    // way from colliding onto the literal operationId "handler"; see the
+    // caveat on RouteDef.operationId's own JSDoc for what this doesn't
+    // cover.
+    const inferredName = def.handler.name !== 'handler' ? def.handler.name : '';
+    const operationId = def.operationId ?? (inferredName || undefined);
     const docPath =
       def.docPath ??
       (def.prefix !== undefined
