@@ -1,4 +1,5 @@
 import express from 'express';
+import type { SecuritySchemeObject } from 'openapi3-ts/oas31';
 
 import { buildOpenApiDocument } from './document.ts';
 import type { AnyRouteDef } from './defineRoute.ts';
@@ -22,7 +23,7 @@ export function createOpenApiRouter({
   /** The registry returned by createRouteRegistry() (see ./defineRoute.ts). */
   routeRegistry: readonly AnyRouteDef[];
   /** Embedded verbatim into the document's components.securitySchemes. */
-  securitySchemes?: Record<string, unknown>;
+  securitySchemes?: Record<string, SecuritySchemeObject>;
   /**
    * Gates this route however the caller's own app gates any other
    * internal endpoint (an API key check, an auth middleware, etc.) --

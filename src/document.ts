@@ -1,43 +1,27 @@
 import joiToJsonImport from 'joi-to-json';
+import type {
+  ComponentsObject,
+  OpenAPIObject,
+  OperationObject,
+  ParameterObject,
+  PathsObject,
+  RequestBodyObject,
+  SchemaObject,
+  SecurityRequirementObject as OASSecurityRequirementObject,
+  SecuritySchemeObject,
+} from 'openapi3-ts/oas31';
 
 import type { AnyRouteDef } from './defineRoute.ts';
-import { mergeSecurity, type SecurityRequirementObject } from './security.ts';
+import { mergeSecurity } from './security.ts';
 
-interface Parameter {
-  name: string;
-  in: string;
-  required: boolean;
-  schema: unknown;
-}
-
-interface RequestBody {
-  content: { 'application/json': { schema: unknown } };
-}
-
-interface Operation {
-  operationId?: string;
-  summary?: string;
-  description?: string;
-  tags?: string[];
-  parameters: Parameter[];
-  requestBody?: RequestBody;
-  responses: Record<string, unknown>;
-  security?: SecurityRequirementObject[];
-}
-
-export interface OpenApiDocument {
-  openapi: string;
-  info: { title: string; version: string };
-  servers?: { url: string }[];
-  paths: Record<string, Record<string, Operation>>;
-  components: { securitySchemes: Record<string, unknown> };
-}
-
-interface JsonSchema {
-  type?: string;
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-}
+// paths/components are optional on the real OpenAPIObject (a document can
+// technically have neither), but buildOpenApiDocument always provides both
+// -- narrowed back to required so a consumer doesn't have to guard against
+// `undefined` for a case that can't actually happen here.
+export type OpenApiDocument = Omit<OpenAPIObject, 'paths' | 'components'> & {
+  paths: PathsObject;
+  components: ComponentsObject;
+};
 
 // joi-to-json is a plain CommonJS `module.exports = parse` -- no
 // `__esModule`/default marker for NodeNext's stricter interop rules to key
@@ -91,11 +75,11 @@ function normalizeCustomJoiTypes(
 }
 
 /** joi-to-json's own types declare its return value as `any`. */
-function toJsonSchema(schema: unknown, fallbackType?: string): JsonSchema {
+function toJsonSchema(schema: unknown, fallbackType?: string): SchemaObject {
   return normalizeCustomJoiTypes(
     joiToJson(schema, 'open-api-3.1'),
     fallbackType
-  ) as JsonSchema;
+  ) as SchemaObject;
 }
 
 // Bounded negated-class quantifier between two literal braces -- no
@@ -112,7 +96,10 @@ const PATH_PARAM_RE = /\{([^}]+)\}/g;
  * from it via joi-to-json; otherwise fall back to a bare string, which is
  * still enough for a generated client to expose it as a real method argument.
  */
-function pathParameters(docPath: string, paramsSchema?: unknown): Parameter[] {
+function pathParameters(
+  docPath: string,
+  paramsSchema?: unknown
+): ParameterObject[] {
   const names = [...docPath.matchAll(PATH_PARAM_RE)].map(
     ([, paramName]) => paramName
   );
@@ -136,7 +123,7 @@ function pathParameters(docPath: string, paramsSchema?: unknown): Parameter[] {
  * OpenAPI parameters at all, and a generated client method ends up with no
  * way to pass query values through.
  */
-function queryParameters(querySchema?: unknown): Parameter[] {
+function queryParameters(querySchema?: unknown): ParameterObject[] {
   if (!querySchema) return [];
 
   const queryJsonSchema = toJsonSchema(querySchema);
@@ -157,7 +144,7 @@ function queryParameters(querySchema?: unknown): Parameter[] {
  * defineRoute already validates headers against this schema at runtime
  * (via headerValidator) -- this is just the document-side counterpart.
  */
-function headerParameters(headersSchema?: unknown): Parameter[] {
+function headerParameters(headersSchema?: unknown): ParameterObject[] {
   if (!headersSchema) return [];
 
   const headersJsonSchema = toJsonSchema(headersSchema);
@@ -181,7 +168,7 @@ function headerParameters(headersSchema?: unknown): Parameter[] {
  * deserialize the response into and just discards the body.
  */
 function responses(
-  routeResponses: Record<number, { description: string; schema?: unknown }>
+  routeResponses: Record<number, { description: string; schema?: SchemaObject }>
 ) {
   return Object.fromEntries(
     Object.entries(routeResponses).map(([status, { description, schema }]) => [
@@ -194,7 +181,7 @@ function responses(
   );
 }
 
-function parameterKey(p: Parameter) {
+function parameterKey(p: ParameterObject) {
   return `${p.in}:${p.name}`;
 }
 
@@ -209,16 +196,18 @@ function parameterKey(p: Parameter) {
  * registrations don't need than omitting one another requires.
  */
 function mergeParameters(
-  existing: Parameter[],
-  incoming: Parameter[]
-): Parameter[] {
+  existing: ParameterObject[],
+  incoming: ParameterObject[]
+): ParameterObject[] {
   const merged = new Map(existing.map((p) => [parameterKey(p), p]));
   for (const p of incoming) {
     const key = parameterKey(p);
     const prior = merged.get(key);
     merged.set(
       key,
-      prior ? { ...prior, required: prior.required || p.required } : p
+      prior
+        ? { ...prior, required: Boolean(prior.required) || Boolean(p.required) }
+        : p
     );
   }
   return [...merged.values()];
@@ -231,17 +220,20 @@ function mergeParameters(
  * wraps in oneOf when registrations genuinely validate different shapes.
  */
 function mergeRequestBody(
-  existing: RequestBody | undefined,
-  incoming: RequestBody | undefined
-) {
+  existing: RequestBodyObject | undefined,
+  incoming: RequestBodyObject | undefined
+): RequestBodyObject | undefined {
   if (!incoming) return existing;
   if (!existing) return incoming;
 
-  const existingSchema = existing.content['application/json'].schema as {
-    oneOf?: unknown[];
-  };
-  const existingVariants: unknown[] = existingSchema.oneOf ?? [existingSchema];
-  const incomingSchema = incoming.content['application/json'].schema;
+  const existingSchema = existing.content['application/json']
+    .schema as SchemaObject;
+  const existingVariants = existingSchema.oneOf ?? [existingSchema];
+  // MediaTypeObject.schema is optional per spec, but every requestBody this
+  // module builds always sets one -- buildOpenApiDocument only ever calls
+  // this with requestBody objects it constructed itself.
+  const incomingSchema = incoming.content['application/json']
+    .schema as SchemaObject;
 
   const alreadyPresent = existingVariants.some(
     (s) => JSON.stringify(s) === JSON.stringify(incomingSchema)
@@ -295,10 +287,10 @@ export function buildOpenApiDocument(
     title: string;
     version: string;
     servers?: string[];
-    securitySchemes?: Record<string, unknown>;
+    securitySchemes?: Record<string, SecuritySchemeObject>;
   }
 ): OpenApiDocument {
-  const paths: OpenApiDocument['paths'] = {};
+  const paths: Record<string, Record<string, OperationObject>> = {};
   const summariesSeen = new Map<string, string[]>();
 
   for (const route of routeRegistry) {
@@ -307,7 +299,7 @@ export function buildOpenApiDocument(
       ...pathParameters(route.docPath, route.request?.params),
       ...queryParameters(route.request?.query),
     ];
-    const requestBody: RequestBody | undefined = route.request?.body
+    const requestBody: RequestBodyObject | undefined = route.request?.body
       ? {
           content: {
             'application/json': { schema: toJsonSchema(route.request.body) },
@@ -321,7 +313,7 @@ export function buildOpenApiDocument(
     // not seen before: paths[route.docPath] itself, and its
     // [route.method] entry, can each genuinely be missing.
     const pathsForDocPath = paths[route.docPath] as
-      Record<string, Operation> | undefined;
+      Record<string, OperationObject> | undefined;
     const existing = pathsForDocPath?.[route.method];
 
     const security = mergeSecurity(existing?.security, route.security);
@@ -342,7 +334,7 @@ export function buildOpenApiDocument(
       ...new Set([...(existing?.tags ?? []), ...(route.tags ?? [])]),
     ];
     const mergedRequestBody = mergeRequestBody(
-      existing?.requestBody,
+      existing?.requestBody as RequestBodyObject | undefined,
       requestBody
     );
 
@@ -354,10 +346,21 @@ export function buildOpenApiDocument(
         description: `Behavior varies by caller. Also available: ${olderSummaries.join('; ')}`,
       }),
       ...(tags.length > 0 && { tags }),
-      parameters: mergeParameters(existing?.parameters ?? [], parameters),
+      parameters: mergeParameters(
+        (existing?.parameters as ParameterObject[] | undefined) ?? [],
+        parameters
+      ),
       ...(mergedRequestBody && { requestBody: mergedRequestBody }),
       responses: responses(route.responses ?? { 200: { description: 'OK' } }),
-      ...(security.length > 0 && !isOnlyPublic && { security }),
+      // mergeSecurity's own SecurityRequirementObject (security.ts) types each
+      // scheme's scope list as `string[] | undefined` (Partial<Record<...>>)
+      // to stay a plain, dependency-free type for consumers; it never
+      // actually leaves a key mapped to undefined, so this always matches
+      // openapi3-ts's stricter (required string[]) version at runtime.
+      ...(security.length > 0 &&
+        !isOnlyPublic && {
+          security: security as OASSecurityRequirementObject[],
+        }),
     };
   }
 

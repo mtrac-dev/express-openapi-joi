@@ -60,7 +60,8 @@
     "joi": "^17.0.0"
   },
   "dependencies": {
-    "joi-to-json": "^5.0.5"
+    "joi-to-json": "^5.0.5",
+    "openapi3-ts": "^4.6.1"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.6",
