@@ -56,7 +56,7 @@ const widgetsRouter = express.Router();
 defineRoute(widgetsRouter, {
   method: 'post',
   path: '/:id',
-  docPath: '/widgets/{id}',
+  prefix: '/widgets',
   summary: 'Create a widget',
   request: {
     params: Joi.object({ id: Joi.string().uuid().required() }),
@@ -92,10 +92,7 @@ with `securedBy` (for a simple, fixed check) or state `security` explicitly
 on the route:
 
 ```ts
-import {
-  securedBy,
-  createOpenApiRouter,
-} from '@mtrac/express-openapi-joi';
+import { securedBy, createOpenApiRouter } from '@mtrac/express-openapi-joi';
 
 const SECURITY_SCHEMES = {
   ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
@@ -106,7 +103,7 @@ const apiKeyAuth = securedBy(myApiKeyAuthMiddleware, 'ApiKeyAuth');
 defineRoute(widgetsRouter, {
   method: 'get',
   path: '/',
-  docPath: '/widgets',
+  prefix: '/widgets',
   middleware: [apiKeyAuth], // security: ['ApiKeyAuth'] is inferred automatically
   handler: (_req, res) => res.status(200).json([]),
 });
@@ -156,15 +153,40 @@ implementation, the usual shape after adopting this package is:
 SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
 
 Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
-imported) just needs its import path repointed at this package -- the
-call shape (`method`/`path`/`docPath`/`prefix`/`params`/`request`/
-`responses`/`security`/`middleware`/`handler`) is unchanged as of this
-writing (see below for two behavior changes that need no call-site edits,
-just awareness).
+imported) just needs its import path repointed at this package. Three
+things changed since the last time this section was updated -- one of
+them (`docPath`) DOES need call-site edits, the other two don't:
 
-Two things this port changed that are worth knowing about before swapping,
-neither of which needs any call-site edits:
-
+- **`docPath` is gone.** `RouteDef` no longer has a `docPath` field at
+  all -- `prefix` is now the only way to give a route's OpenAPI path
+  context, and it's always combined with `path` (`prefix + path`,
+  translating this route's own `:name`/`:name?`/`:name(regex)` segments
+  to `{name}`) to produce the document path. Concretely, in every real
+  router file in the original app today, `docPath` is hand-computed as exactly
+  `prefix + translated-path` via a string constant declared once per
+  file (e.g. `cartRouter.ts`'s `const cartDocPath = '/carts/{cart_id}'`,
+  reused as `docPath: `${cartDocPath}/migrate`` alongside
+  `path: '/:cart_id/migrate'`) -- so the conversion is mechanical:
+  - If `docPath` is just `path` translated verbatim (no other router
+    mounted in front of it) -- delete the `docPath` line entirely, don't
+    add `prefix`. (Registering directly on `app`, or a router mounted at
+    the app's absolute root, needs nothing here.)
+  - Otherwise, replace that per-file `docPath` constant (e.g.
+    `cartDocPath`) with a `prefix` value of the same string, and pass
+    `prefix: cartDocPath` (or inline the string) on every `defineRoute`
+    call in that file instead of `docPath`. Delete the now-unused
+    `docPath` constant declarations (`cartDocPath`/`itemsDocPath`/
+    `itemDocPath`/etc.) once nothing references them.
+  - `noteRouter.ts`'s mergeParams-derived-param case (`cart_id`/
+    `item_id` from the parent mount, invisible to this router's own
+    relative `path`) converts the same way: its existing
+    `noteDocPath` constant -- already exactly `prefix + path`,
+    since `path` there is just `'/'` -- becomes the `prefix` value
+    directly; keep the existing `params` override (or add one) for
+    typing `req.params`, same as today.
+  - A registration that throws `resolves to an empty docPath` after this
+    conversion means a route ended up with neither a `prefix` nor a
+    non-root `path` -- give it one or the other.
 - **Schemas marked with `.id()`** (if the prototype's schemas use it) now
   produce a real `$ref`/`components.schemas` entry instead of the shape
   being inlined at every call site. If two different Joi schemas
@@ -174,7 +196,7 @@ neither of which needs any call-site edits:
   in, it's surfacing a real pre-existing ambiguity, not a regression.
 - **`operationId`** no longer needs an explicit override just to avoid two
   anonymous-handler routes colliding: an inline `handler: (req, res) =>
-  {...}` (JS infers the property key `"handler"` as that function's own
+{...}` (JS infers the property key `"handler"` as that function's own
   name) used to mean every such route got the same, useless
   `operationId: "handler"`. It's now either the handler's own real
   function name, or -- when that's not usable -- a name derived from
