@@ -34,6 +34,37 @@ describe('UNIT: createOpenApiRouter', () => {
     expect(res.headers['cache-control']).to.equal('public, max-age=3600');
   });
 
+  it('derives servers from the actual incoming request, not a fixed config value', async () => {
+    const res = await request.get('/openapi.json');
+
+    expect(res.body.servers).to.have.lengthOf(1);
+    expect(res.body.servers[0].url).to.match(
+      /^http:\/\/127\.0\.0\.1:\d+\/openapi\.json$/
+    );
+  });
+
+  describe('when mounted under a further prefix', () => {
+    const nestedApp = express();
+    const outerRouter = express.Router();
+    outerRouter.use(
+      '/openapi.json',
+      createOpenApiRouter({
+        title: 'test-api',
+        version: '1.0.0',
+        routeRegistry: [],
+      })
+    );
+    nestedApp.use('/v1', outerRouter);
+
+    it("includes the full cumulative mount path in servers' url", async () => {
+      const res = await testRequest(nestedApp).get('/v1/openapi.json');
+
+      expect(res.body.servers[0].url).to.match(
+        /^http:\/\/127\.0\.0\.1:\d+\/v1\/openapi\.json$/
+      );
+    });
+  });
+
   describe('with gating middleware', () => {
     const gatedApp = express();
     const denyAll: express.RequestHandler = (_req, res) => {

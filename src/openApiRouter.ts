@@ -35,14 +35,29 @@ export function createOpenApiRouter({
 
   let cachedDocument: ReturnType<typeof buildOpenApiDocument> | undefined;
 
-  router.get('/', ...middleware, (_req, res) => {
+  router.get('/', ...middleware, (req, res) => {
     cachedDocument ??= buildOpenApiDocument(routeRegistry, {
       title,
       version,
       securitySchemes,
     });
+
+    // servers isn't part of the cached document: this library doesn't
+    // assume anything about a caller's own public base URL. req.baseUrl
+    // is the full mount path this router was reached through (cumulative
+    // across any nesting), since this route is registered at this
+    // router's own root ('/') -- so it's already exactly the base path
+    // this document is served under, with nothing of this router's own
+    // to strip back off. The Host header is mandatory on every real
+    // HTTP/1.1 request, so the `?? ''` fallback is unreachable in
+    // practice -- @types/express just can't express that req.get('host')
+    // is never actually undefined here.
+    /* c8 ignore next */
+    const host = req.get('host') ?? '';
+    const servers = [{ url: `${req.protocol}://${host}${req.baseUrl}` }];
+
     res.set('Cache-Control', 'public, max-age=3600');
-    res.status(200).json(cachedDocument);
+    res.status(200).json({ ...cachedDocument, servers });
   });
 
   return router;
