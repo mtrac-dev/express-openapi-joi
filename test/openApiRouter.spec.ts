@@ -451,7 +451,7 @@ describe('UNIT: createOpenApiRouter', () => {
       const res = await testRequest(appWithRoutes).get('/openapi.json');
 
       const siteParam = res.body.paths['/doohickeys'].get.parameters.find(
-        (p) => p.name === 'x-tenant'
+        (p: { name: string }) => p.name === 'x-tenant'
       );
       expect(siteParam).to.include({ required: true });
     });

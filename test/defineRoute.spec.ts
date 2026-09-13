@@ -237,7 +237,10 @@ describe('UNIT: defineRoute', () => {
       res,
       next
     ) => {
-      res.locals.widget = { id: req.params.id };
+      // ParamsDictionary's index signature is `string | string[]` (Express
+      // supports repeated route params producing arrays); this route's
+      // `:id` is always a single segment.
+      res.locals.widget = { id: req.params.id as string };
       next();
     };
 

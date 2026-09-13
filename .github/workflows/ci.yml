@@ -37,7 +37,9 @@ jobs:
         run: npm ci
       - name: Disable pre & post scripts for ci
         run: echo "NPM_CONFIG_IGNORE_SCRIPTS=true" >> "$GITHUB_ENV"
-      - name: Build ESM + CJS output and type-check source
+      - name: Type-check src and test
+        run: npm run typecheck
+      - name: Build ESM + CJS output
         run: npm run build
 
   test:
