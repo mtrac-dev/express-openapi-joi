@@ -198,6 +198,26 @@ describe('UNIT: createOpenApiRouter', () => {
         handler: (_req, res) => res.status(200).json([]),
       });
       defineRoute(router, {
+        method: 'get',
+        path: '/widgets',
+        docPath: '/widgets',
+        summary: 'List widgets',
+        // 'public' registered BEFORE a real scheme -- the order gizmos
+        // (above) doesn't exercise, since 'public' merging with an
+        // already-real security array never collapses to just `[{}]`
+        // along the way.
+        security: ['public'],
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/widgets',
+        docPath: '/widgets',
+        summary: 'List widgets, as an admin',
+        middleware: [apiKeyAuth],
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
         method: 'post',
         path: '/gearboxes',
         docPath: '/gearboxes',
@@ -426,6 +446,15 @@ describe('UNIT: createOpenApiRouter', () => {
       expect(res.body.paths['/gizmos'].get.security).to.have.deep.members([
         { ApiKeyAuth: [] },
         {},
+      ]);
+    });
+
+    it("keeps an earlier 'public' alternative when a later registration in the same docPath+method stack requires a real scheme", async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      expect(res.body.paths['/widgets'].get.security).to.have.deep.members([
+        {},
+        { ApiKeyAuth: [] },
       ]);
     });
 

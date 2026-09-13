@@ -12,7 +12,7 @@ import type {
 } from 'openapi3-ts/oas31';
 
 import type { AnyRouteDef } from './defineRoute.ts';
-import { mergeSecurity } from './security.ts';
+import { mergeSecurity, type SecurityRequirementObject } from './security.ts';
 
 // paths/components are optional on the real OpenAPIObject (a document can
 // technically have neither), but buildOpenApiDocument always provides both
@@ -437,6 +437,7 @@ export function buildOpenApiDocument(
 ): OpenApiDocument {
   const paths: Record<string, Record<string, OperationObject>> = {};
   const summariesSeen = new Map<string, string[]>();
+  const securitySeen = new Map<string, SecurityRequirementObject[]>();
   const componentSchemas: Record<string, SchemaObject> = {};
 
   for (const route of routeRegistry) {
@@ -463,15 +464,29 @@ export function buildOpenApiDocument(
     const pathsForDocPath = paths[route.docPath] as
       Record<string, OperationObject> | undefined;
     const existing = pathsForDocPath?.[route.method];
+    const operationKey = `${route.docPath} ${route.method}`;
 
-    const security = mergeSecurity(existing?.security, route.security);
+    // Reads/writes securitySeen rather than existing?.security, because
+    // the emitted operation below omits `security` entirely when the
+    // merged result is only `[{}]` ("public") -- if a later registration
+    // in this same docPath+method stack then read that omission back as
+    // "nothing stated yet", it would silently lose the fact that `public`
+    // was ever a valid alternative (order-dependent: registering `public`
+    // then a real scheme would drop `public`; the reverse order wouldn't).
+    // securitySeen always keeps the true merged result across the whole
+    // stack, independent of what the emitted operation below chooses to
+    // display.
+    const security = mergeSecurity(
+      securitySeen.get(operationKey),
+      route.security
+    );
+    securitySeen.set(operationKey, security);
     // A merged result of just `[{}]` ("public" and nothing else) is the
     // same as no security requirement at all -- omit the key entirely
     // rather than clutter every undocumented route with a redundant one.
     const isOnlyPublic =
       security.length === 1 && Object.keys(security[0]).length === 0;
 
-    const operationKey = `${route.docPath} ${route.method}`;
     const summaries = summariesSeen.get(operationKey) ?? [];
     if (route.summary && !summaries.includes(route.summary))
       summaries.push(route.summary);
