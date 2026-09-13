@@ -29,6 +29,27 @@ describe('UNIT: createOpenApiRouter', () => {
     expect(res.headers['cache-control']).to.equal('public, max-age=3600');
   });
 
+  describe('with gating middleware', () => {
+    const gatedApp = express();
+    const denyAll: express.RequestHandler = (_req, res) => {
+      res.status(401).json({});
+    };
+    gatedApp.use(
+      '/openapi.json',
+      createOpenApiRouter({
+        title: 'test-api',
+        version: '1.0.0',
+        middleware: [denyAll],
+      })
+    );
+
+    it("gates the route via the caller's own middleware, same as any other endpoint", async () => {
+      const res = await testRequest(gatedApp).get('/openapi.json');
+
+      expect(res.statusCode).to.equal(401);
+    });
+  });
+
   describe('with routes registered via defineRoute', () => {
     let initialLength: number;
 
