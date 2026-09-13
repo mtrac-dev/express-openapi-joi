@@ -59,7 +59,19 @@ export interface RouteDef<
   tags?: string[];
   /** Runtime Joi validation, same as bodyValidator/etc. today. */
   request?: { body?: Body; query?: Query; params?: Schema; headers?: Schema };
-  responses?: Record<number, { description: string }>;
+  /**
+   * `schema` is a plain JSON Schema object, not Joi -- unlike request
+   * validation, none of today's response shapes have a runtime (Joi)
+   * schema to convert, so there's nothing to derive this from
+   * automatically. Without it, a generated client's method has no
+   * response type to deserialize into and just discards the body
+   * (returns void) -- only needed for a route whose callers actually
+   * read the response body.
+   */
+  responses?: Record<
+    number,
+    { description: string; schema?: Record<string, unknown> }
+  >;
   /**
    * Same providers you'd pass to a provideAll()-style combinator today --
    * `Locals` is inferred from their combined Provider<L> type, so

@@ -24,9 +24,53 @@ const joiToJson = joiToJsonImport as unknown as (
   mode: string
 ) => unknown;
 
+const JSON_SCHEMA_TYPES = new Set([
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'object',
+  'array',
+  'null',
+]);
+
+/**
+ * joi-to-json emits a custom Joi extension's own type name verbatim (e.g.
+ * a phone-number extension's `type: 'phoneNumber'`) rather than the
+ * underlying JSON Schema primitive it's actually built on. An OpenAPI
+ * generator then reads that as an implicit reference to a model that was
+ * never defined anywhere, breaking the generated client's own build.
+ * `fallbackType` defaults to 'string' (the common case for a Joi
+ * extension), but is overridable for one built on something else.
+ */
+function normalizeCustomJoiTypes(
+  schema: unknown,
+  fallbackType = 'string'
+): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => normalizeCustomJoiTypes(item, fallbackType));
+  }
+  if (schema === null || typeof schema !== 'object') return schema;
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    normalized[key] = normalizeCustomJoiTypes(value, fallbackType);
+  }
+  if (
+    typeof normalized.type === 'string' &&
+    !JSON_SCHEMA_TYPES.has(normalized.type)
+  ) {
+    normalized.type = fallbackType;
+  }
+  return normalized;
+}
+
 /** joi-to-json's own types declare its return value as `any`. */
-function toJsonSchema(schema: unknown): JsonSchema {
-  return joiToJson(schema, 'open-api-3.1') as JsonSchema;
+function toJsonSchema(schema: unknown, fallbackType?: string): JsonSchema {
+  return normalizeCustomJoiTypes(
+    joiToJson(schema, 'open-api-3.1'),
+    fallbackType
+  ) as JsonSchema;
 }
 
 // A single bounded negated-class quantifier between two literal braces --
@@ -62,6 +106,70 @@ function pathParameters(docPath: string, paramsSchema?: unknown) {
 }
 
 /**
+ * Same idea as pathParameters, but for `request.query` -- without this, a
+ * route validated only by a query schema (no path params, no body) gets no
+ * OpenAPI parameters at all, and a generated client method ends up with no
+ * way to pass query values through.
+ */
+function queryParameters(querySchema?: unknown) {
+  if (!querySchema) return undefined;
+
+  const queryJsonSchema = toJsonSchema(querySchema);
+  const required = queryJsonSchema.required ?? [];
+
+  return Object.entries(queryJsonSchema.properties ?? {}).map(
+    ([paramName, schema]) => ({
+      name: paramName,
+      in: 'query',
+      required: required.includes(paramName),
+      schema,
+    })
+  );
+}
+
+/**
+ * Same idea as pathParameters/queryParameters, but for `request.headers`.
+ * defineRoute already validates headers against this schema at runtime
+ * (via headerValidator) -- this is just the document-side counterpart.
+ */
+function headerParameters(headersSchema?: unknown) {
+  if (!headersSchema) return undefined;
+
+  const headersJsonSchema = toJsonSchema(headersSchema);
+  const required = headersJsonSchema.required ?? [];
+
+  return Object.entries(headersJsonSchema.properties ?? {}).map(
+    ([paramName, schema]) => ({
+      name: paramName,
+      in: 'header',
+      required: required.includes(paramName),
+      schema,
+    })
+  );
+}
+
+/**
+ * Response bodies have no runtime (Joi) schema to convert -- unlike
+ * request validation, `responses[status].schema` (when present) is
+ * already a plain JSON Schema object, authored by hand on the defineRoute
+ * call. Without it, a generated client's method has nothing to
+ * deserialize the response into and just discards the body.
+ */
+function responses(
+  routeResponses: Record<number, { description: string; schema?: unknown }>
+) {
+  return Object.fromEntries(
+    Object.entries(routeResponses).map(([status, { description, schema }]) => [
+      status,
+      {
+        description,
+        ...(schema ? { content: { 'application/json': { schema } } } : {}),
+      },
+    ])
+  );
+}
+
+/**
  * Builds the OpenAPI document from routeRegistry -- every route registered
  * via defineRoute so far. Request schemas convert from the same Joi schemas
  * that actually validate the request, via joi-to-json, so there's nothing
@@ -78,12 +186,18 @@ export function buildOpenApiDocument({
   const paths: OpenApiDocument['paths'] = {};
 
   for (const route of routeRegistry) {
+    const parameters = [
+      ...(headerParameters(route.request?.headers) ?? []),
+      ...(pathParameters(route.docPath, route.request?.params) ?? []),
+      ...(queryParameters(route.request?.query) ?? []),
+    ];
+
     paths[route.docPath] ??= {};
     paths[route.docPath][route.method] = {
       operationId: route.operationId,
       summary: route.summary,
       tags: route.tags,
-      parameters: pathParameters(route.docPath, route.request?.params),
+      parameters,
       ...(route.request?.body && {
         requestBody: {
           content: {
@@ -91,7 +205,7 @@ export function buildOpenApiDocument({
           },
         },
       }),
-      responses: route.responses ?? { 200: { description: 'OK' } },
+      responses: responses(route.responses ?? { 200: { description: 'OK' } }),
     };
   }
 
