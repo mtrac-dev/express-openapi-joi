@@ -363,7 +363,7 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)).to.include({ operationId: 'listAllWidgets' });
   });
 
-  it('leaves operationId undefined for an anonymous handler with no explicit override', () => {
+  it('derives operationId from method+docPath for an anonymous handler with no explicit override', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     // Array indirection defeats JS's name inference for an anonymous
@@ -377,14 +377,14 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      docPath: '/widgets/{id}',
       handler: anonymousHandler,
     });
 
-    expect(routeRegistry.at(-1)?.operationId).to.be.undefined;
+    expect(routeRegistry.at(-1)).to.include({ operationId: 'getWidgetsId' });
   });
 
-  it('leaves operationId undefined for a bare inline handler, rather than colliding every such route onto the inferred name "handler"', () => {
+  it('derives operationId from method+docPath for a bare inline handler, rather than colliding every such route onto the inferred name "handler"', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
 
@@ -404,8 +404,24 @@ describe('UNIT: defineRoute', () => {
       handler: (_req, res) => res.status(200).json([]),
     });
 
-    expect(routeRegistry.at(-2)?.operationId).to.be.undefined;
-    expect(routeRegistry.at(-1)?.operationId).to.be.undefined;
+    expect(routeRegistry.at(-2)).to.include({ operationId: 'getWidgets' });
+    expect(routeRegistry.at(-1)).to.include({ operationId: 'getGadgets' });
+  });
+
+  it('derives a PascalCase docPath segment from a hyphenated path, keeping the derived operationId a valid identifier-like name', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
+    const router = express.Router();
+
+    defineRoute(router, {
+      method: 'post',
+      path: '/',
+      docPath: '/gift-cards',
+      handler: (_req, res) => res.status(201).json({}),
+    });
+
+    expect(routeRegistry.at(-1)).to.include({
+      operationId: 'postGiftCards',
+    });
   });
 
   it('pushes the route definition into routeRegistry for later OpenAPI-document generation', () => {

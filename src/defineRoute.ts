@@ -58,6 +58,29 @@ function pathToDocSegment(path: string): string {
   return path === '/' ? '' : path.replace(/:(\w+)(?:\([^)]*\))?\??/g, '{$1}');
 }
 
+function toPascalSegment(segment: string): string {
+  return segment
+    .replace(/[{}]/g, '')
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join('');
+}
+
+/**
+ * Fallback operationId for when neither an explicit one nor a usable
+ * handler name is available -- built from method + docPath so the
+ * operation still gets a deterministic, meaningful name instead of
+ * nothing at all, which just pushes the job onto whatever a generated
+ * client's own fallback does (the "much less usable" shape
+ * RouteDef.operationId's own JSDoc already warns about, e.g.
+ * `widgetsIdPost`).
+ */
+function deriveOperationId(method: string, docPath: string): string {
+  const segments = docPath.split('/').filter(Boolean).map(toPascalSegment);
+  return [method, ...segments].join('');
+}
+
 export interface RouteDef<
   Path extends string,
   Locals extends object,
@@ -87,26 +110,30 @@ export interface RouteDef<
   prefix?: string;
   /**
    * OpenAPI operationId -- generated clients (openapi-generator-cli's
-   * typescript-fetch, in particular) name their methods from this when
-   * present. Without it, method names get auto-derived from path+method
-   * and are much less usable (e.g. `widgetsIdPost`). Defaults to
-   * `handler`'s own function name when omitted -- only needed when
-   * `handler` is anonymous, or shared across registrations that want
-   * different operationIds.
+   * typescript-fetch, in particular) name their methods from this. Falls
+   * back, in order: (1) `handler`'s own function name, EXCEPT the literal
+   * name `"handler"` (see below); (2) method + docPath (e.g. `GET
+   * /widgets/{id}` -> `getWidgetsId`) when neither of those is usable.
+   * Only needed explicitly when a handler is shared across registrations
+   * that want different operationIds, or to get a nicer name than the
+   * method+docPath fallback produces.
    *
-   * "Anonymous" is a narrower case than it looks: an arrow function
-   * assigned directly as `handler: (req, res) => {...}` (the everyday
-   * call style, including everywhere else in this file's own examples) is
-   * NOT anonymous to JS -- it infers the property key itself, `"handler"`,
-   * as the function's `.name`. Every route defined that way would
-   * otherwise collide onto the literal operationId `"handler"`. defineRoute
-   * treats that one specific inferred name as if it were still anonymous
-   * (see below) to avoid that, but a handler assigned some OTHER way that
-   * happens to infer a different property/variable name (e.g. as a plain
-   * object's `get:` method rather than `handler:`) isn't covered by that
-   * check and would still collide silently. State `operationId` explicitly
-   * whenever a handler isn't a `function name(...)` declaration or a bare
-   * `handler: (...) => {...}` assignment.
+   * The `"handler"` exclusion exists because a bare
+   * `handler: (req, res) => {...}` (the everyday call style, including
+   * everywhere else in this file's own examples) is NOT anonymous to JS --
+   * an arrow function assigned directly as an object property infers that
+   * property's own key, `"handler"`, as the function's `.name`. Without
+   * this exclusion, every route defined that way would collide onto the
+   * literal operationId `"handler"`. A handler assigned some OTHER way
+   * that happens to infer a different name (e.g. a plain object's `get:`
+   * method rather than `handler:`) isn't covered by this one check and
+   * would fall through to it as if it were a real, intentional name.
+   *
+   * None of this is checked for uniqueness across registrations --
+   * reusing the same named handler function (or the same explicit
+   * operationId) for two actually-different operations produces a
+   * document with a duplicate operationId, same as it always has; that's
+   * on the caller, not something defineRoute guards against.
    */
   operationId?: string;
   summary?: string;
@@ -220,16 +247,6 @@ export function createRouteRegistry() {
     router: express.IRouter,
     def: RouteDef<Path, Locals, Body, Query, ParamNames>
   ) {
-    // A bare `handler: (req, res) => {...}` (the call style used
-    // everywhere else in this file's own examples) isn't anonymous to
-    // JS -- it infers the object property key itself, "handler", as the
-    // function's own `.name`. Treating that one specific inferred name as
-    // if it were still anonymous is what keeps every route defined that
-    // way from colliding onto the literal operationId "handler"; see the
-    // caveat on RouteDef.operationId's own JSDoc for what this doesn't
-    // cover.
-    const inferredName = def.handler.name !== 'handler' ? def.handler.name : '';
-    const operationId = def.operationId ?? (inferredName || undefined);
     const docPath =
       def.docPath ??
       (def.prefix !== undefined
@@ -240,6 +257,20 @@ export function createRouteRegistry() {
         `defineRoute: ${def.method.toUpperCase()} ${def.path} needs either docPath or prefix`
       );
     }
+    // A bare `handler: (req, res) => {...}` (the call style used
+    // everywhere else in this file's own examples) isn't anonymous to
+    // JS -- it infers the object property key itself, "handler", as the
+    // function's own `.name`. Treating that one specific inferred name as
+    // if it were still anonymous is what keeps every route defined that
+    // way from colliding onto the literal operationId "handler"; see the
+    // caveat on RouteDef.operationId's own JSDoc for what this doesn't
+    // cover. Falling all the way through to deriveOperationId (rather
+    // than leaving operationId undefined) means a generated client still
+    // gets a real, meaningful method name instead of inventing its own.
+    const inferredName = def.handler.name !== 'handler' ? def.handler.name : '';
+    const operationId =
+      def.operationId ??
+      (inferredName || deriveOperationId(def.method, docPath));
     // A bare `*` (Express's wildcard-segment syntax) outside a `{name}`
     // placeholder has no OpenAPI equivalent -- a generated client would
     // send the literal character `*` in the URL, which can never match
