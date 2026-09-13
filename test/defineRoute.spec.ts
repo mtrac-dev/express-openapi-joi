@@ -390,9 +390,14 @@ describe('UNIT: defineRoute', () => {
       handler: (_req, res) => res.status(200).json([]),
     });
 
-    const doc = buildOpenApiDocument({ title: 'test-api', version: '1.0.0' });
+    const doc = buildOpenApiDocument({
+      title: 'test-api',
+      version: '1.0.0',
+      servers: ['https://api.example.com'],
+    });
 
     expect(doc.paths['/widgets'].get).to.include({ summary: 'List widgets' });
+    expect(doc.servers).to.eql([{ url: 'https://api.example.com' }]);
   });
 
   it('gives each call its own isolated registry, not a shared singleton', () => {

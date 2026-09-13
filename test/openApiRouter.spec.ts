@@ -153,6 +153,7 @@ describe('UNIT: createOpenApiRouter', () => {
         path: '/gizmos',
         docPath: '/gizmos',
         summary: 'List gizmos, as an admin',
+        tags: ['admin'],
         middleware: [apiKeyAuth],
         handler: (_req, res) => res.status(200).json([]),
       });
@@ -161,7 +162,63 @@ describe('UNIT: createOpenApiRouter', () => {
         path: '/gizmos',
         docPath: '/gizmos',
         summary: 'List gizmos',
+        tags: ['gizmos'],
         security: ['public'],
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
+        method: 'post',
+        path: '/gearboxes',
+        docPath: '/gearboxes',
+        summary: 'Create a gearbox, as an admin',
+        request: { body: Joi.object({ ratio: Joi.number().required() }) },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
+        method: 'post',
+        path: '/gearboxes',
+        docPath: '/gearboxes',
+        summary: 'Create a gearbox',
+        request: { body: Joi.object({ color: Joi.string().required() }) },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      const sprocketSchema = Joi.object({ teeth: Joi.number().required() });
+      defineRoute(router, {
+        method: 'post',
+        path: '/sprockets',
+        docPath: '/sprockets',
+        summary: 'Create a sprocket, as an admin',
+        request: { body: sprocketSchema },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
+        method: 'post',
+        path: '/sprockets',
+        docPath: '/sprockets',
+        summary: 'Create a sprocket',
+        request: { body: sprocketSchema },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/doohickeys',
+        docPath: '/doohickeys',
+        summary: 'List doohickeys',
+        request: {
+          headers: Joi.object({ 'x-tenant': Joi.string() }).unknown(true),
+        },
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/doohickeys',
+        docPath: '/doohickeys',
+        // No summary on this registration -- shouldn't erase the one above.
+        request: {
+          headers: Joi.object({ 'x-tenant': Joi.string().required() }).unknown(
+            true
+          ),
+        },
         handler: (_req, res) => res.status(200).json([]),
       });
 
@@ -291,6 +348,81 @@ describe('UNIT: createOpenApiRouter', () => {
         { ApiKeyAuth: [] },
         {},
       ]);
+    });
+
+    it('unions tags across a shared docPath+method instead of only keeping the last', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      expect(res.body.paths['/gizmos'].get.tags).to.have.members([
+        'admin',
+        'gizmos',
+      ]);
+    });
+
+    it('keeps the last-registered summary as the primary one, and lists the others in description', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const op = res.body.paths['/gizmos'].get;
+      expect(op.summary).to.equal('List gizmos');
+      expect(op.description).to.equal(
+        'Behavior varies by caller. Also available: List gizmos, as an admin'
+      );
+    });
+
+    it('wraps requestBody in oneOf when a shared docPath+method validates genuinely different schemas', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const { schema } =
+        res.body.paths['/gearboxes'].post.requestBody.content[
+          'application/json'
+        ];
+      expect(schema.oneOf).to.have.deep.members([
+        {
+          type: 'object',
+          properties: { ratio: { type: 'number' } },
+          required: ['ratio'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          properties: { color: { type: 'string' } },
+          required: ['color'],
+          additionalProperties: false,
+        },
+      ]);
+    });
+
+    it('does not wrap requestBody in oneOf when every registration agrees on the same schema', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const { schema } =
+        res.body.paths['/sprockets'].post.requestBody.content[
+          'application/json'
+        ];
+      expect(schema.oneOf).to.be.undefined;
+      expect(schema).to.eql({
+        type: 'object',
+        properties: { teeth: { type: 'number' } },
+        required: ['teeth'],
+        additionalProperties: false,
+      });
+    });
+
+    it('keeps an earlier summary when a later registration sharing the docPath+method gives none', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      expect(res.body.paths['/doohickeys'].get.summary).to.equal(
+        'List doohickeys'
+      );
+    });
+
+    it('is required in the merged parameters if any registration sharing the docPath+method requires it', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const siteParam = res.body.paths['/doohickeys'].get.parameters.find(
+        (p) => p.name === 'x-tenant'
+      );
+      expect(siteParam).to.include({ required: true });
     });
   });
 });
