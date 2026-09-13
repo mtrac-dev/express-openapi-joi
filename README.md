@@ -12,6 +12,19 @@ responses, and security schemes, merged correctly across routes that share a
 docPath+method). `createRouteRegistry()` is also available directly, for an
 isolated registry instead of the default shared one.
 
+The document's types come from `openapi3-ts/oas31` (a real, maintained
+OpenAPI 3.1 type package), not hand-rolled interfaces. A Joi schema marked
+with `.id('Name')` is emitted as `$ref: '#/components/schemas/Name'` plus a
+`components.schemas.Name` entry, instead of the same shape repeated inline
+at every call site that reuses it -- reusing the same id across two
+differently-shaped schemas throws at document-build time rather than
+silently documenting one and discarding the other. `operationId` defaults
+to `handler`'s own function name (falling back to a derived
+method+docPath name, e.g. `getWidgetsId`, when the handler is anonymous or
+its inferred name is just the literal `"handler"` -- see
+`RouteDef.operationId`'s own JSDoc for the full fallback chain and its one
+documented gap).
+
 See `src/index.ts` for the full public API.
 
 ## Installation
@@ -79,7 +92,10 @@ with `securedBy` (for a simple, fixed check) or state `security` explicitly
 on the route:
 
 ```ts
-import { securedBy, createOpenApiRouter } from '@mtrac/express-openapi-joi';
+import {
+  securedBy,
+  createOpenApiRouter,
+} from '@mtrac/express-openapi-joi';
 
 const SECURITY_SCHEMES = {
   ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
@@ -142,7 +158,29 @@ SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
 Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
 imported) just needs its import path repointed at this package -- the
 call shape (`method`/`path`/`docPath`/`prefix`/`params`/`request`/
-`responses`/`security`/`middleware`/`handler`) is unchanged.
+`responses`/`security`/`middleware`/`handler`) is unchanged as of this
+writing (see below for two behavior changes that need no call-site edits,
+just awareness).
+
+Two things this port changed that are worth knowing about before swapping,
+neither of which needs any call-site edits:
+
+- **Schemas marked with `.id()`** (if the prototype's schemas use it) now
+  produce a real `$ref`/`components.schemas` entry instead of the shape
+  being inlined at every call site. If two different Joi schemas
+  accidentally reuse the same `.id()`, building the document now throws
+  immediately naming the collision, rather than silently documenting
+  whichever one happened to be seen first -- if that throws once you swap
+  in, it's surfacing a real pre-existing ambiguity, not a regression.
+- **`operationId`** no longer needs an explicit override just to avoid two
+  anonymous-handler routes colliding: an inline `handler: (req, res) =>
+  {...}` (JS infers the property key `"handler"` as that function's own
+  name) used to mean every such route got the same, useless
+  `operationId: "handler"`. It's now either the handler's own real
+  function name, or -- when that's not usable -- a name derived from
+  method+docPath (e.g. `getWidgetsId`), so operationId collisions across
+  genuinely different routes should be rarer than they were, without
+  anything needing to change in the router files themselves.
 
 ## Development
 
