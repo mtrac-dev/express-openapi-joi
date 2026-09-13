@@ -21,7 +21,7 @@ describe('UNIT: global defineRoute/routeRegistry', () => {
     defineRoute(express.Router(), {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       summary: 'List widgets',
       handler: (_req, res) => res.status(200).json([]),
     });

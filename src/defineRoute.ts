@@ -92,20 +92,15 @@ export interface RouteDef<
   /** Path as passed to `router[method]` -- relative to wherever this router is mounted. */
   path: Path;
   /**
-   * Full absolute path for the OpenAPI document, including every param,
-   * using `{name}` placeholders. Only needed when `prefix` can't express
-   * it (see `prefix` below) -- e.g. a parent mergeParams-derived param
-   * that appears in neither `prefix` nor `path` for this to translate.
-   */
-  docPath?: string;
-  /**
-   * This router's absolute mount prefix (already using OpenAPI's `{name}`
-   * placeholder syntax for any params in the prefix itself, e.g.
-   * `/carts/{cartId}/items/{itemId}`) -- when given, `docPath` is derived
-   * as `prefix + path` (translating this route's own
-   * `:name`/`:name?`/`:name(regex)` segments to `{name}`) instead of
-   * needing the full absolute path restated by hand on every defineRoute
-   * call. Ignored if `docPath` is given explicitly.
+   * This router's absolute mount prefix, already using OpenAPI's `{name}`
+   * placeholder syntax for any params in the prefix itself (e.g.
+   * `/carts/{cartId}/items/{itemId}` for a mergeParams-derived parent
+   * param that doesn't appear in this router's own relative `path` at
+   * all) -- the OpenAPI document's path for this route is always `prefix +
+   * path` (translating this route's own `:name`/`:name?`/`:name(regex)`
+   * segments to `{name}`). Omit it for a route registered directly on
+   * `app`, or on a router mounted at the absolute root -- there, `path`
+   * alone is already the full path.
    */
   prefix?: string;
   /**
@@ -174,7 +169,7 @@ export interface RouteDef<
    * different alternatives than the first. Middleware tagged via
    * `securedBy` (see ./security.ts) contributes to this automatically;
    * state it explicitly for anything else, the same way
-   * `operationId`/`docPath` sometimes need to be. A route gated by
+   * `operationId`/`params` sometimes need to be. A route gated by
    * something deliberately not modeled as a security scheme should state
    * nothing at all, rather than claim `public` -- leaving `security`
    * unstated is how "this axis isn't documented" gets represented,
@@ -199,20 +194,17 @@ export interface RouteDef<
   >;
 }
 
-// docPath is optional on RouteDef itself (a caller can derive it from
-// `prefix` instead) but always resolved to a real string by the time
-// defineRoute pushes an entry into routeRegistry -- narrowed back to
-// required here so document.ts doesn't have to guard against `undefined`
-// for a case that can't actually happen once a route is registered.
-export type AnyRouteDef = Omit<
-  RouteDef<
-    string,
-    object,
-    Schema | undefined,
-    Schema | undefined,
-    readonly string[]
-  >,
-  'docPath'
+// docPath doesn't exist on RouteDef at all -- it's always derived from
+// prefix+path (see defineRoute below) and resolved to a real string by
+// the time defineRoute pushes an entry into routeRegistry. Added here so
+// document.ts can read it directly, rather than every reader having to
+// re-derive it from prefix+path itself.
+export type AnyRouteDef = RouteDef<
+  string,
+  object,
+  Schema | undefined,
+  Schema | undefined,
+  readonly string[]
 > & { docPath: string };
 
 /**
@@ -247,14 +239,13 @@ export function createRouteRegistry() {
     router: express.IRouter,
     def: RouteDef<Path, Locals, Body, Query, ParamNames>
   ) {
-    const docPath =
-      def.docPath ??
-      (def.prefix !== undefined
-        ? `${def.prefix}${pathToDocSegment(def.path)}`
-        : undefined);
-    if (!docPath) {
+    const docPath = `${def.prefix ?? ''}${pathToDocSegment(def.path)}`;
+    if (docPath === '') {
+      // Only reachable with no `prefix` and a bare `path: '/'` -- e.g. a
+      // route registered directly on `app`'s own root with nothing else
+      // to give the OpenAPI document a real path.
       throw new Error(
-        `defineRoute: ${def.method.toUpperCase()} ${def.path} needs either docPath or prefix`
+        `defineRoute: ${def.method.toUpperCase()} ${def.path} resolves to an empty docPath -- pass \`prefix\`, or use a non-root \`path\``
       );
     }
     // A bare `handler: (req, res) => {...}` (the call style used

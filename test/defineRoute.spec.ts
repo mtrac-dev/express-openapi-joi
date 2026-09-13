@@ -13,7 +13,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/:id',
-      docPath: '/widgets/{id}',
+      prefix: '/widgets',
       handler: (req, res) => {
         // Compile-time check: req.params.id must type-check as string with
         // no explicit Params generic, purely from the '/:id' path literal.
@@ -38,7 +38,6 @@ describe('UNIT: defineRoute', () => {
     defineRoute(app, {
       method: 'get',
       path: '/widgets/:id',
-      docPath: '/widgets/{id}',
       handler: (req, res) => {
         const { id } = req.params;
         res.status(200).json({ id });
@@ -61,7 +60,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'post',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       request: { body: schema },
       handler: (req, res) => {
         res.status(201).json({ name: req.body.name });
@@ -91,7 +90,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'post',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       request: { body: Joi.object({ name: Joi.string().required() }) },
       middleware: [notFoundMiddleware],
       handler: (_req, res) => res.status(201).json({}),
@@ -186,7 +185,7 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)).to.include({ docPath: '/widgets/{slug}' });
   });
 
-  it('throws at registration time when neither docPath nor prefix is given', () => {
+  it('throws at registration time when a bare-root path with no prefix resolves to an empty docPath', () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();
 
@@ -196,7 +195,7 @@ describe('UNIT: defineRoute', () => {
         path: '/',
         handler: (_req, res) => res.status(200).json([]),
       });
-    }).to.throw(/needs either docPath or prefix/);
+    }).to.throw(/resolves to an empty docPath/);
   });
 
   it('throws at registration time when docPath has a bare wildcard segment', () => {
@@ -207,7 +206,6 @@ describe('UNIT: defineRoute', () => {
       defineRoute(router, {
         method: 'get',
         path: '/files/*',
-        docPath: '/files/*',
         handler: (_req, res) => res.status(200).json({}),
       });
     }).to.throw(/wildcard docPath/);
@@ -221,7 +219,7 @@ describe('UNIT: defineRoute', () => {
       defineRoute(router, {
         method: 'get',
         path: '/',
-        docPath: '/widgets/{na*me}',
+        prefix: '/widgets/{na*me}',
         handler: (_req, res) => res.status(200).json({}),
       });
     }).to.not.throw();
@@ -247,7 +245,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/:id',
-      docPath: '/widgets/{id}',
+      prefix: '/widgets',
       middleware: [widgetProvider],
       handler: (req, res) => {
         // Compile-time check: res.locals.widget type-checks with no cast,
@@ -272,7 +270,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       request: { query: Joi.object({ q: Joi.string().required() }) },
       handler: (_req, res) => res.status(200).json([]),
     });
@@ -291,7 +289,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       request: {
         headers: Joi.object({ 'x-tenant': Joi.string().required() }).unknown(
           true
@@ -316,7 +314,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/:id',
-      docPath: '/widgets/{id}',
+      prefix: '/widgets',
       request: { params: Joi.object({ id: Joi.string().uuid().required() }) },
       handler: (_req, res) => res.status(200).json([]),
     });
@@ -338,7 +336,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       handler: function listWidgets(_req, res) {
         res.status(200).json([]);
       },
@@ -353,7 +351,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       operationId: 'listAllWidgets',
       handler: function listWidgets(_req, res) {
         res.status(200).json([]);
@@ -377,7 +375,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets/{id}',
+      prefix: '/widgets/{id}',
       handler: anonymousHandler,
     });
 
@@ -394,13 +392,13 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       handler: (_req, res) => res.status(200).json([]),
     });
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/gadgets',
+      prefix: '/gadgets',
       handler: (_req, res) => res.status(200).json([]),
     });
 
@@ -415,7 +413,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'post',
       path: '/',
-      docPath: '/gift-cards',
+      prefix: '/gift-cards',
       handler: (_req, res) => res.status(201).json({}),
     });
 
@@ -430,7 +428,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(router, {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       summary: 'List widgets',
       handler: (_req, res) => res.status(200).json([]),
     });
@@ -448,7 +446,7 @@ describe('UNIT: defineRoute', () => {
     defineRoute(express.Router(), {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       summary: 'List widgets',
       handler: (_req, res) => res.status(200).json([]),
     });
@@ -470,7 +468,7 @@ describe('UNIT: defineRoute', () => {
     first.defineRoute(express.Router(), {
       method: 'get',
       path: '/',
-      docPath: '/widgets',
+      prefix: '/widgets',
       handler: (_req, res) => res.status(200).json([]),
     });
 

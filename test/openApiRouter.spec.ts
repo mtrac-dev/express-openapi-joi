@@ -96,7 +96,7 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/:id',
-        docPath: '/widgets/{id}',
+        prefix: '/widgets',
         request: {
           body: Joi.object({ name: Joi.string().required() }),
           params: Joi.object({ id: Joi.string().uuid().required() }),
@@ -107,7 +107,7 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/',
-        docPath: '/gadgets',
+        prefix: '/gadgets',
         summary: 'List gadgets',
         request: {
           query: Joi.object({ tag: Joi.string().valid('a', 'b', null) }),
@@ -117,7 +117,7 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/:id',
-        docPath: '/doodads/{id}',
+        prefix: '/doodads',
         summary: 'Get a doodad',
         request: {
           headers: Joi.object({ 'x-tenant': Joi.string().required() }).unknown(
@@ -136,7 +136,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/thingamajigs',
-        docPath: '/thingamajigs',
         summary: 'List thingamajigs',
         request: { query: Joi.object({ phone: customJoi.phoneNumber() }) },
         handler: (_req, res) => res.status(200).json([]),
@@ -144,7 +143,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/whatsits',
-        docPath: '/whatsits',
         summary: 'List whatsits',
         // Not an object schema -- joi-to-json emits no `properties` key at
         // all for this, exercising queryParameters' fallback for that case.
@@ -154,7 +152,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/thingumbobs',
-        docPath: '/thingumbobs',
         summary: 'List thingumbobs',
         // Nothing required -- joi-to-json emits no `required` key at all,
         // exercising headerParameters' fallback for that case.
@@ -166,7 +163,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/dinguses',
-        docPath: '/dinguses',
         summary: 'List dinguses',
         // Not an object schema -- exercises headerParameters' fallback for
         // a schema with no `properties` key, same as /whatsits for query.
@@ -182,7 +178,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/gizmos',
-        docPath: '/gizmos',
         summary: 'List gizmos, as an admin',
         tags: ['admin'],
         middleware: [apiKeyAuth],
@@ -191,7 +186,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/gizmos',
-        docPath: '/gizmos',
         summary: 'List gizmos',
         tags: ['gizmos'],
         security: ['public'],
@@ -200,7 +194,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/widgets',
-        docPath: '/widgets',
         summary: 'List widgets',
         // 'public' registered BEFORE a real scheme -- the order gizmos
         // (above) doesn't exercise, since 'public' merging with an
@@ -212,7 +205,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/widgets',
-        docPath: '/widgets',
         summary: 'List widgets, as an admin',
         middleware: [apiKeyAuth],
         handler: (_req, res) => res.status(200).json([]),
@@ -220,7 +212,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/thingamabobs',
-        docPath: '/thingamabobs',
         summary: 'List thingamabobs, as an admin',
         middleware: [apiKeyAuth],
         // Documents a 403 not repeated by the registration below --
@@ -235,7 +226,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/thingamabobs',
-        docPath: '/thingamabobs',
         summary: 'List thingamabobs',
         security: ['public'],
         handler: (_req, res) => res.status(200).json([]),
@@ -243,7 +233,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/gearboxes',
-        docPath: '/gearboxes',
         summary: 'Create a gearbox, as an admin',
         request: { body: Joi.object({ ratio: Joi.number().required() }) },
         handler: (_req, res) => res.status(201).json({}),
@@ -251,7 +240,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/gearboxes',
-        docPath: '/gearboxes',
         summary: 'Create a gearbox',
         request: { body: Joi.object({ color: Joi.string().required() }) },
         handler: (_req, res) => res.status(201).json({}),
@@ -260,7 +248,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/sprockets',
-        docPath: '/sprockets',
         summary: 'Create a sprocket, as an admin',
         request: { body: sprocketSchema },
         handler: (_req, res) => res.status(201).json({}),
@@ -268,7 +255,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/sprockets',
-        docPath: '/sprockets',
         summary: 'Create a sprocket',
         request: { body: sprocketSchema },
         handler: (_req, res) => res.status(201).json({}),
@@ -276,7 +262,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/cogs',
-        docPath: '/cogs',
         summary: 'Create a cog, as an admin',
         // Same shape as the /cogs registration below, but with its fields
         // declared in the opposite order -- two independently-constructed
@@ -293,7 +278,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/cogs',
-        docPath: '/cogs',
         summary: 'Create a cog',
         request: {
           body: Joi.object({
@@ -306,7 +290,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/knobs/:id',
-        docPath: '/knobs/{id}',
         summary: 'Get a knob, as an admin',
         request: { params: Joi.object({ id: Joi.string().uuid().required() }) },
         handler: (_req, res) => res.status(200).json({}),
@@ -314,7 +297,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/knobs/:id',
-        docPath: '/knobs/{id}',
         summary: 'Get a knob',
         // Same param, same location, validated differently -- should
         // document both, not silently keep only the first-seen schema.
@@ -324,7 +306,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/doohickeys',
-        docPath: '/doohickeys',
         summary: 'List doohickeys',
         request: {
           headers: Joi.object({ 'x-tenant': Joi.string() }).unknown(true),
@@ -334,7 +315,6 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/doohickeys',
-        docPath: '/doohickeys',
         // No summary on this registration -- shouldn't erase the one above.
         request: {
           headers: Joi.object({ 'x-tenant': Joi.string().required() }).unknown(
@@ -593,7 +573,7 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'post',
         path: '/',
-        docPath: '/id-test-widgets',
+        prefix: '/id-test-widgets',
         summary: 'Create a widget',
         request: { body: schema },
         handler: (_req, res) => res.status(201).json({}),
@@ -628,7 +608,7 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/',
-        docPath: '/id-test-thing',
+        prefix: '/id-test-thing',
         summary: 'Get a thing',
         request: { headers },
         handler: (_req, res) => res.status(200).json({}),
@@ -653,16 +633,16 @@ describe('UNIT: createOpenApiRouter', () => {
       const router = express.Router();
       defineRoute(router, {
         method: 'post',
-        path: '/a',
-        docPath: '/id-test-collision-a',
+        path: '/',
+        prefix: '/id-test-collision-a',
         summary: 'A',
         request: { body: Joi.object({ a: Joi.string() }).id('Collision') },
         handler: (_req, res) => res.status(201).json({}),
       });
       defineRoute(router, {
         method: 'post',
-        path: '/b',
-        docPath: '/id-test-collision-b',
+        path: '/',
+        prefix: '/id-test-collision-b',
         summary: 'B',
         request: { body: Joi.object({ b: Joi.number() }).id('Collision') },
         handler: (_req, res) => res.status(201).json({}),
@@ -678,8 +658,8 @@ describe('UNIT: createOpenApiRouter', () => {
       const router = express.Router();
       defineRoute(router, {
         method: 'post',
-        path: '/a',
-        docPath: '/id-test-reordered-a',
+        path: '/',
+        prefix: '/id-test-reordered-a',
         summary: 'A',
         request: {
           body: Joi.object({
@@ -691,8 +671,8 @@ describe('UNIT: createOpenApiRouter', () => {
       });
       defineRoute(router, {
         method: 'post',
-        path: '/b',
-        docPath: '/id-test-reordered-b',
+        path: '/',
+        prefix: '/id-test-reordered-b',
         summary: 'B',
         request: {
           body: Joi.object({
