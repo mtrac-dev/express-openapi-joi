@@ -179,6 +179,35 @@ describe('UNIT: defineRoute', () => {
     }).to.throw(/needs either docPath or prefix/);
   });
 
+  it('throws at registration time when docPath has a bare wildcard segment', () => {
+    const { defineRoute } = createRouteRegistry();
+    const router = express.Router();
+
+    expect(() => {
+      defineRoute(router, {
+        method: 'get',
+        path: '/files/*',
+        docPath: '/files/*',
+        handler: (_req, res) => res.status(200).json({}),
+      });
+    }).to.throw(/wildcard docPath/);
+  });
+
+  it('does not reject a `*` that only appears inside a `{name}` placeholder', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
+    const router = express.Router();
+
+    expect(() => {
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        docPath: '/widgets/{na*me}',
+        handler: (_req, res) => res.status(200).json({}),
+      });
+    }).to.not.throw();
+    expect(routeRegistry.at(-1)).to.include({ docPath: '/widgets/{na*me}' });
+  });
+
   it('infers Locals from Provider<L> middleware, the same merging a provideAll()-style combinator does for the type system', async () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();

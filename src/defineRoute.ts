@@ -211,6 +211,20 @@ export function createRouteRegistry() {
         `defineRoute: ${def.method.toUpperCase()} ${def.path} needs either docPath or prefix`
       );
     }
+    // A bare `*` (Express's wildcard-segment syntax) outside a `{name}`
+    // placeholder has no OpenAPI equivalent -- a generated client would
+    // send the literal character `*` in the URL, which can never match
+    // the real route. Routes that need Express's own wildcard matching
+    // aren't representable here; register them directly on `router`
+    // instead of through defineRoute, outside the documented surface.
+    // Bounded negated-class quantifier -- no backtracking ambiguity.
+    // eslint-disable-next-line sonarjs/super-linear-regex
+    if (docPath.replace(/\{[^}]*\}/g, '').includes('*')) {
+      throw new Error(
+        `defineRoute: ${def.method.toUpperCase()} ${def.path} has a wildcard docPath (${docPath}) with no ` +
+          'OpenAPI equivalent -- register it directly on the router instead'
+      );
+    }
     const security = [
       ...new Set([...(def.security ?? []), ...inferSecurity(def.middleware)]),
     ];
