@@ -19,10 +19,11 @@
   "scripts": {
     "prepare": "npm run build",
     "clean": "rm -rf dist",
-    "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run build:cjs:pkg",
+    "prebuild": "npm run clean",
+    "build": "npm run build:esm && npm run build:cjs",
+    "postbuild": "echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
     "build:esm": "tsc -p tsconfig.esm.json",
     "build:cjs": "tsc -p tsconfig.cjs.json",
-    "build:cjs:pkg": "echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint --ext .ts .",
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write .",
