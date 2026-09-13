@@ -97,14 +97,16 @@ export function defineRoute<
   // of which named method registered the handler. Must stay a method call
   // (router[def.method](...)), not a detached reference -- Express's router
   // methods rely on `this`, which a standalone reference loses.
+  // Validators run before middleware -- fail fast on malformed input before
+  // any resource-provider I/O -- not the other way around.
   const dynamicRouter = router as unknown as Record<
     string,
     (...args: unknown[]) => void
   >;
   dynamicRouter[def.method](
     def.path,
-    ...(def.middleware ?? []),
     ...validators,
+    ...(def.middleware ?? []),
     def.handler
   );
 }

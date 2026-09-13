@@ -62,6 +62,30 @@ describe('UNIT: defineRoute', () => {
     expect(invalid.statusCode).to.equal(400);
   });
 
+  it('runs validators before middleware, so a validation failure wins over a middleware that would otherwise short-circuit', async () => {
+    const router = express.Router();
+    const notFoundMiddleware: express.RequestHandler = (_req, res) => {
+      res.status(404).json({});
+    };
+
+    defineRoute(router, {
+      method: 'post',
+      path: '/',
+      docPath: '/widgets',
+      request: { body: Joi.object({ name: Joi.string().required() }) },
+      middleware: [notFoundMiddleware],
+      handler: (_req, res) => res.status(201).json({}),
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use('/widgets', router);
+
+    const res = await testRequest(app).post('/widgets').send({});
+
+    expect(res.statusCode).to.equal(400);
+  });
+
   it('accepts an explicit Params override for mergeParams-derived params not visible in the router-relative path', async () => {
     const router = express.Router({ mergeParams: true });
 
