@@ -3,6 +3,7 @@ import Joi from 'joi';
 import { expect } from 'chai';
 
 import { defineRoute, routeRegistry } from '../src/defineRoute.ts';
+import type { Provider } from '../src/provider.ts';
 import { testRequest } from './helpers/request.ts';
 
 describe('UNIT: defineRoute', () => {
@@ -86,19 +87,21 @@ describe('UNIT: defineRoute', () => {
     expect(res.statusCode).to.equal(400);
   });
 
-  it('accepts an explicit Params override for mergeParams-derived params not visible in the router-relative path', async () => {
+  it('mergeParams-derived params not visible in the router-relative path need a local cast, not a generic argument', async () => {
     const router = express.Router({ mergeParams: true });
 
-    defineRoute<'/', { cartId: string; itemId: string }>(router, {
+    defineRoute(router, {
       method: 'delete',
       path: '/',
       docPath: '/carts/{cartId}/items/{itemId}',
       handler: (req, res) => {
-        // Compile-time check: req.params.cartId/itemId type-check even
-        // though '/' alone has no params to extract.
-        res
-          .status(200)
-          .json({ cartId: req.params.cartId, itemId: req.params.itemId });
+        // '/' alone has nothing for ExtractRouteParams to find -- cartId/itemId
+        // come from the parent mount below, so they need a local cast here.
+        const { cartId, itemId } = req.params as unknown as {
+          cartId: string;
+          itemId: string;
+        };
+        res.status(200).json({ cartId, itemId });
       },
     });
 
@@ -109,6 +112,40 @@ describe('UNIT: defineRoute', () => {
 
     expect(res.statusCode).to.equal(200);
     expect(res.body).to.eql({ cartId: 'p1', itemId: 'i1' });
+  });
+
+  it('infers Locals from Provider<L> middleware, the same merging a provideAll()-style combinator does for the type system', async () => {
+    const router = express.Router();
+
+    const widgetProvider: Provider<{ widget: { id: string } }> = (
+      req,
+      res,
+      next
+    ) => {
+      res.locals.widget = { id: req.params.id };
+      next();
+    };
+
+    defineRoute(router, {
+      method: 'get',
+      path: '/:id',
+      docPath: '/widgets/{id}',
+      middleware: [widgetProvider],
+      handler: (req, res) => {
+        // Compile-time check: res.locals.widget type-checks with no cast,
+        // inferred purely from widgetProvider's Provider<{widget:...}> type.
+        const { widget } = res.locals;
+        res.status(200).json(widget);
+      },
+    });
+
+    const app = express();
+    app.use('/widgets', router);
+
+    const res = await testRequest(app).get('/widgets/abc');
+
+    expect(res.statusCode).to.equal(200);
+    expect(res.body).to.eql({ id: 'abc' });
   });
 
   it('validates query params against a Joi schema when request.query is given', async () => {

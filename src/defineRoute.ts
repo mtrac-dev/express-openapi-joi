@@ -7,15 +7,18 @@ import {
   paramValidator,
   queryValidator,
 } from './validators.ts';
+import type { Provider } from './provider.ts';
 
 /**
  * Extracts `:name` segments from an Express path STRING literal type into a
  * params object type -- the same trick Hono uses internally for path-param
- * inference. Only works for string literal paths; a route mounted via a
- * RegExp path, or one whose params come from a parent router's mergeParams
- * mount (not visible in this router's own relative path), needs an explicit
- * `Params` type argument on defineRoute instead -- this utility can't see
- * either of those cases.
+ * inference. Only works for string literal paths. Two cases it can't see:
+ * a route mounted via a RegExp path, or one whose params come from a
+ * parent router's mergeParams mount rather than this router's own
+ * relative path. For either, cast `req.params` explicitly inside the
+ * handler -- TypeScript can't mix an explicit type argument for one
+ * generic parameter here with inference for the others, so there's no
+ * generic-argument escape hatch, just a local cast where it's needed.
  */
 type ExtractRouteParams<Path extends string> =
   Path extends `${string}:${infer Param}/${infer Rest}`
@@ -28,7 +31,7 @@ type InferJoi<S> = S extends Schema<infer T> ? T : never;
 
 export interface RouteDef<
   Path extends string,
-  Params,
+  Locals extends object,
   Body extends Schema | undefined,
   Query extends Schema | undefined,
 > {
@@ -44,21 +47,30 @@ export interface RouteDef<
   docPath: string;
   summary?: string;
   tags?: string[];
-  /** Runtime Joi validation, same as bodyValidator/etc. today -- independent of the `Params` type argument above. */
+  /** Runtime Joi validation, same as bodyValidator/etc. today. */
   request?: { body?: Body; query?: Query; params?: Schema; headers?: Schema };
   responses?: Record<number, { description: string }>;
-  middleware?: express.RequestHandler[];
+  /**
+   * Same providers you'd pass to a provideAll()-style combinator today --
+   * `Locals` is inferred from their combined Provider<L> type, so
+   * res.locals is typed in `handler` without restating it. A plain
+   * express.RequestHandler[] (not Provider<L>[]) still works, but Locals
+   * then can't be inferred from it -- res.locals stays untyped in
+   * `handler` unless you cast it there.
+   */
+  middleware?: Provider<Locals>[] | express.RequestHandler[];
   handler: express.RequestHandler<
-    Params,
+    ExtractRouteParams<Path>,
     unknown,
     InferJoi<Body>,
-    InferJoi<Query>
+    InferJoi<Query>,
+    Locals
   >;
 }
 
 export const routeRegistry: RouteDef<
   string,
-  unknown,
+  object,
   Schema | undefined,
   Schema | undefined
 >[] = [];
@@ -70,14 +82,14 @@ export const routeRegistry: RouteDef<
  */
 export function defineRoute<
   Path extends string,
-  Params = ExtractRouteParams<Path>,
+  Locals extends object = Record<string, never>,
   Body extends Schema | undefined = undefined,
   Query extends Schema | undefined = undefined,
->(router: express.Router, def: RouteDef<Path, Params, Body, Query>) {
+>(router: express.Router, def: RouteDef<Path, Locals, Body, Query>) {
   routeRegistry.push(
     def as unknown as RouteDef<
       string,
-      unknown,
+      object,
       Schema | undefined,
       Schema | undefined
     >
@@ -92,7 +104,7 @@ export function defineRoute<
 
   // def.method is a union, so TS can't resolve a specific router.get/post/...
   // overload here -- the real type-safety is at the defineRoute call site
-  // (handler is checked against Params/Body/Query there); this dispatch is
+  // (handler is checked against Locals/Body/Query there); this dispatch is
   // just plumbing, and Express's runtime behavior is identical regardless
   // of which named method registered the handler. Must stay a method call
   // (router[def.method](...)), not a detached reference -- Express's router
