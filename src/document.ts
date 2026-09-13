@@ -93,6 +93,36 @@ function toJsonSchema(
 }
 
 /**
+ * `JSON.stringify` is order-sensitive -- `{a,b}` and `{b,a}` serialize
+ * differently even though they're the same shape -- so comparing two
+ * schemas via a plain `JSON.stringify(a) === JSON.stringify(b)` spuriously
+ * treats identically-shaped schemas as different whenever their keys, or
+ * an array like `required` (whose own element order likewise just follows
+ * whatever order a Joi schema's fields happened to be declared in), come
+ * out in a different order between two structurally-equal Joi schemas.
+ * None of the arrays a JSON Schema built from Joi actually contains
+ * (`required`, `enum`, `oneOf`, ...) are positionally significant to what
+ * they validate, so sorting both object keys and array elements before
+ * stringifying compares the actual shape instead of incidental ordering --
+ * this is only ever used to compare, never to change what's actually
+ * stored or emitted.
+ */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    const items = value.map(stableStringify).sort((a, b) => a.localeCompare(b));
+    return `[${items.join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
  * joi-to-json returns a schema's own converted shape directly UNLESS the
  * Joi schema (or anything nested inside it) carries a `.id(...)` -- then it
  * returns the converted shape (or, when the WHOLE schema is itself id'd,
@@ -116,7 +146,7 @@ function convertJoiSchema(
 
   for (const [name, def] of Object.entries(refs ?? {})) {
     const existing = componentSchemas[name] as SchemaObject | undefined;
-    if (existing && JSON.stringify(existing) !== JSON.stringify(def)) {
+    if (existing && stableStringify(existing) !== stableStringify(def)) {
       throw new Error(
         `buildOpenApiDocument: two different Joi schemas both used .id('${name}') with different shapes -- give one of them a different id.`
       );
@@ -319,7 +349,7 @@ function mergeRequestBody(
     .schema as SchemaObject;
 
   const alreadyPresent = existingVariants.some(
-    (s) => JSON.stringify(s) === JSON.stringify(incomingSchema)
+    (s) => stableStringify(s) === stableStringify(incomingSchema)
   );
   if (alreadyPresent) return existing;
 

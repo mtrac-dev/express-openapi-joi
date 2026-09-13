@@ -231,6 +231,36 @@ describe('UNIT: createOpenApiRouter', () => {
         handler: (_req, res) => res.status(201).json({}),
       });
       defineRoute(router, {
+        method: 'post',
+        path: '/cogs',
+        docPath: '/cogs',
+        summary: 'Create a cog, as an admin',
+        // Same shape as the /cogs registration below, but with its fields
+        // declared in the opposite order -- two independently-constructed
+        // schemas that joi-to-json can emit with differently-ordered keys
+        // even though they describe the same shape.
+        request: {
+          body: Joi.object({
+            teeth: Joi.number().required(),
+            ratio: Joi.number().required(),
+          }),
+        },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
+        method: 'post',
+        path: '/cogs',
+        docPath: '/cogs',
+        summary: 'Create a cog',
+        request: {
+          body: Joi.object({
+            ratio: Joi.number().required(),
+            teeth: Joi.number().required(),
+          }),
+        },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
         method: 'get',
         path: '/doohickeys',
         docPath: '/doohickeys',
@@ -439,6 +469,14 @@ describe('UNIT: createOpenApiRouter', () => {
       });
     });
 
+    it('does not wrap requestBody in oneOf for two schemas of the same shape declared with fields in a different order', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const { schema } =
+        res.body.paths['/cogs'].post.requestBody.content['application/json'];
+      expect(schema.oneOf).to.be.undefined;
+    });
+
     it('keeps an earlier summary when a later registration sharing the docPath+method gives none', async () => {
       const res = await testRequest(appWithRoutes).get('/openapi.json');
 
@@ -543,6 +581,41 @@ describe('UNIT: createOpenApiRouter', () => {
       expect(() => buildOpenApiDocument({ title: 't', version: '1' })).to.throw(
         /used \.id\('Collision'\)/
       );
+    });
+
+    it('does not throw for two equally-shaped .id() schemas whose fields are declared in a different order', () => {
+      const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
+      const router = express.Router();
+      defineRoute(router, {
+        method: 'post',
+        path: '/a',
+        docPath: '/id-test-reordered-a',
+        summary: 'A',
+        request: {
+          body: Joi.object({
+            teeth: Joi.number().required(),
+            ratio: Joi.number().required(),
+          }).id('Reordered'),
+        },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
+        method: 'post',
+        path: '/b',
+        docPath: '/id-test-reordered-b',
+        summary: 'B',
+        request: {
+          body: Joi.object({
+            ratio: Joi.number().required(),
+            teeth: Joi.number().required(),
+          }).id('Reordered'),
+        },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+
+      expect(() =>
+        buildOpenApiDocument({ title: 't', version: '1' })
+      ).not.to.throw();
     });
   });
 });
