@@ -1,6 +1,6 @@
 import joiToJsonImport from 'joi-to-json';
 
-import { routeRegistry } from './defineRoute.ts';
+import type { AnyRouteDef } from './defineRoute.ts';
 
 export interface OpenApiDocument {
   openapi: string;
@@ -170,19 +170,19 @@ function responses(
 }
 
 /**
- * Builds the OpenAPI document from routeRegistry -- every route registered
- * via defineRoute so far. Request schemas convert from the same Joi schemas
- * that actually validate the request, via joi-to-json, so there's nothing
- * to keep in sync by hand. Routes without an explicit `responses` entry
- * just get a generic 200 with no body schema (client method returns void).
+ * Builds the OpenAPI document from a route registry -- every route
+ * registered via defineRoute against it so far (see
+ * createRouteRegistry(), which binds this to its own registry so a
+ * caller doesn't have to pass one explicitly). Request schemas convert
+ * from the same Joi schemas that actually validate the request, via
+ * joi-to-json, so there's nothing to keep in sync by hand. Routes
+ * without an explicit `responses` entry just get a generic 200 with no
+ * body schema (client method returns void).
  */
-export function buildOpenApiDocument({
-  title,
-  version,
-}: {
-  title: string;
-  version: string;
-}): OpenApiDocument {
+export function buildOpenApiDocument(
+  routeRegistry: readonly AnyRouteDef[],
+  { title, version }: { title: string; version: string }
+): OpenApiDocument {
   const paths: OpenApiDocument['paths'] = {};
 
   for (const route of routeRegistry) {

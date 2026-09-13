@@ -7,6 +7,7 @@ import {
   paramValidator,
   queryValidator,
 } from './validators.ts';
+import { buildOpenApiDocument } from './document.ts';
 import type { Provider } from './provider.ts';
 
 /**
@@ -90,56 +91,70 @@ export interface RouteDef<
   >;
 }
 
-export const routeRegistry: RouteDef<
+export type AnyRouteDef = RouteDef<
   string,
   object,
   Schema | undefined,
   Schema | undefined
->[] = [];
+>;
 
 /**
- * Registers a route (and its schemas) in one call -- both the real Express
- * registration and the metadata a later OpenAPI-document build step reads
- * from routeRegistry. See ./document.ts.
+ * Creates an independent route registry and a `defineRoute` bound to it --
+ * a fresh instance per call, not a module-level singleton, so a consumer
+ * embedding this in a larger process (or a test) can keep its own registry
+ * isolated instead of sharing some other part of the same process's
+ * instance. buildOpenApiDocument is bound to the same registry, so a
+ * caller never has to pass it explicitly.
  */
-export function defineRoute<
-  Path extends string,
-  Locals extends object = Record<string, never>,
-  Body extends Schema | undefined = undefined,
-  Query extends Schema | undefined = undefined,
->(router: express.Router, def: RouteDef<Path, Locals, Body, Query>) {
-  const operationId = def.operationId ?? (def.handler.name || undefined);
-  routeRegistry.push({ ...def, operationId } as unknown as RouteDef<
-    string,
-    object,
-    Schema | undefined,
-    Schema | undefined
-  >);
+export function createRouteRegistry() {
+  const routeRegistry: AnyRouteDef[] = [];
 
-  const validators = [
-    def.request?.params && paramValidator(def.request.params),
-    def.request?.headers && headerValidator(def.request.headers),
-    def.request?.query && queryValidator(def.request.query),
-    def.request?.body && bodyValidator(def.request.body),
-  ].filter((mw): mw is express.RequestHandler => Boolean(mw));
+  /**
+   * Registers a route (and its schemas) in one call -- both the real
+   * Express registration and the metadata buildOpenApiDocument reads back
+   * from routeRegistry.
+   */
+  function defineRoute<
+    Path extends string,
+    Locals extends object = Record<string, never>,
+    Body extends Schema | undefined = undefined,
+    Query extends Schema | undefined = undefined,
+  >(router: express.Router, def: RouteDef<Path, Locals, Body, Query>) {
+    const operationId = def.operationId ?? (def.handler.name || undefined);
+    routeRegistry.push({ ...def, operationId } as unknown as AnyRouteDef);
 
-  // def.method is a union, so TS can't resolve a specific router.get/post/...
-  // overload here -- the real type-safety is at the defineRoute call site
-  // (handler is checked against Locals/Body/Query there); this dispatch is
-  // just plumbing, and Express's runtime behavior is identical regardless
-  // of which named method registered the handler. Must stay a method call
-  // (router[def.method](...)), not a detached reference -- Express's router
-  // methods rely on `this`, which a standalone reference loses.
-  // Validators run before middleware -- fail fast on malformed input before
-  // any resource-provider I/O -- not the other way around.
-  const dynamicRouter = router as unknown as Record<
-    string,
-    (...args: unknown[]) => void
-  >;
-  dynamicRouter[def.method](
-    def.path,
-    ...validators,
-    ...(def.middleware ?? []),
-    def.handler
-  );
+    const validators = [
+      def.request?.params && paramValidator(def.request.params),
+      def.request?.headers && headerValidator(def.request.headers),
+      def.request?.query && queryValidator(def.request.query),
+      def.request?.body && bodyValidator(def.request.body),
+    ].filter((mw): mw is express.RequestHandler => Boolean(mw));
+
+    // def.method is a union, so TS can't resolve a specific router.get/post/...
+    // overload here -- the real type-safety is at the defineRoute call site
+    // (handler is checked against Locals/Body/Query there); this dispatch is
+    // just plumbing, and Express's runtime behavior is identical regardless
+    // of which named method registered the handler. Must stay a method call
+    // (router[def.method](...)), not a detached reference -- Express's router
+    // methods rely on `this`, which a standalone reference loses. Validators
+    // run before middleware -- fail fast on malformed input before any
+    // resource-provider I/O -- not the other way around.
+    const dynamicRouter = router as unknown as Record<
+      string,
+      (...args: unknown[]) => void
+    >;
+    dynamicRouter[def.method](
+      def.path,
+      ...validators,
+      ...(def.middleware ?? []),
+      def.handler
+    );
+  }
+
+  return {
+    defineRoute,
+    routeRegistry,
+    buildOpenApiDocument: (options: { title: string; version: string }) =>
+      buildOpenApiDocument(routeRegistry, options),
+  };
 }

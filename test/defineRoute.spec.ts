@@ -2,24 +2,13 @@ import express from 'express';
 import Joi from 'joi';
 import { expect } from 'chai';
 
-import { defineRoute, routeRegistry } from '../src/defineRoute.ts';
+import { createRouteRegistry } from '../src/defineRoute.ts';
 import type { Provider } from '../src/provider.ts';
 import { testRequest } from './helpers/request.ts';
 
 describe('UNIT: defineRoute', () => {
-  // routeRegistry is a single shared, module-level array -- other spec
-  // files (e.g. openApiRouter.spec.ts) read it through buildOpenApiDocument.
-  // Truncate back to the length recorded before each test, not to zero --
-  // wiping it outright would leak into whichever spec file runs next.
-  let initialLength: number;
-  beforeEach(() => {
-    initialLength = routeRegistry.length;
-  });
-  afterEach(() => {
-    routeRegistry.length = initialLength;
-  });
-
   it('infers path params from a string-literal path, with no explicit Params argument', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -43,6 +32,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('validates the body against a Joi schema, matching bodyValidator behavior', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     const schema = Joi.object<{ name: string }>({
       name: Joi.string().required(),
@@ -72,6 +62,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('runs validators before middleware, so a validation failure wins over a middleware that would otherwise short-circuit', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     const notFoundMiddleware: express.RequestHandler = (_req, res) => {
       res.status(404).json({});
@@ -96,6 +87,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('mergeParams-derived params not visible in the router-relative path need a local cast, not a generic argument', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router({ mergeParams: true });
 
     defineRoute(router, {
@@ -123,6 +115,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('infers Locals from Provider<L> middleware, the same merging a provideAll()-style combinator does for the type system', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
 
     const widgetProvider: Provider<{ widget: { id: string } }> = (
@@ -157,6 +150,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('validates query params against a Joi schema when request.query is given', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -175,6 +169,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('validates headers against a Joi schema when request.headers is given', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -199,6 +194,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('validates params against a Joi schema when request.params is given', async () => {
+    const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -220,6 +216,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it("defaults operationId to the handler's own function name", () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -234,6 +231,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('overrides the handler-name default when operationId is given explicitly', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -249,6 +247,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('leaves operationId undefined for an anonymous handler with no explicit override', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     // Array indirection defeats JS's name inference for an anonymous
     // function expression -- passed directly as `handler: (req, res) => {}`,
@@ -269,6 +268,7 @@ describe('UNIT: defineRoute', () => {
   });
 
   it('pushes the route definition into routeRegistry for later OpenAPI-document generation', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
       method: 'get',
@@ -278,11 +278,41 @@ describe('UNIT: defineRoute', () => {
       handler: (_req, res) => res.status(200).json([]),
     });
 
-    expect(routeRegistry).to.have.lengthOf(initialLength + 1);
+    expect(routeRegistry).to.have.lengthOf(1);
     expect(routeRegistry.at(-1)).to.include({
       method: 'get',
       docPath: '/widgets',
       summary: 'List widgets',
     });
+  });
+
+  it('binds buildOpenApiDocument to its own registry', () => {
+    const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
+    defineRoute(express.Router(), {
+      method: 'get',
+      path: '/',
+      docPath: '/widgets',
+      summary: 'List widgets',
+      handler: (_req, res) => res.status(200).json([]),
+    });
+
+    const doc = buildOpenApiDocument({ title: 'test-api', version: '1.0.0' });
+
+    expect(doc.paths['/widgets'].get).to.include({ summary: 'List widgets' });
+  });
+
+  it('gives each call its own isolated registry, not a shared singleton', () => {
+    const first = createRouteRegistry();
+    const second = createRouteRegistry();
+
+    first.defineRoute(express.Router(), {
+      method: 'get',
+      path: '/',
+      docPath: '/widgets',
+      handler: (_req, res) => res.status(200).json([]),
+    });
+
+    expect(first.routeRegistry).to.have.lengthOf(1);
+    expect(second.routeRegistry).to.have.lengthOf(0);
   });
 });

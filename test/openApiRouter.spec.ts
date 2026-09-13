@@ -2,7 +2,7 @@ import express from 'express';
 import Joi from 'joi';
 import { expect } from 'chai';
 
-import { defineRoute, routeRegistry } from '../src/defineRoute.ts';
+import { createRouteRegistry } from '../src/defineRoute.ts';
 import { createOpenApiRouter } from '../src/openApiRouter.ts';
 import { testRequest } from './helpers/request.ts';
 
@@ -10,7 +10,11 @@ describe('UNIT: createOpenApiRouter', () => {
   const app = express();
   app.use(
     '/openapi.json',
-    createOpenApiRouter({ title: 'test-api', version: '1.0.0' })
+    createOpenApiRouter({
+      title: 'test-api',
+      version: '1.0.0',
+      routeRegistry: [],
+    })
   );
   const request = testRequest(app);
 
@@ -39,6 +43,7 @@ describe('UNIT: createOpenApiRouter', () => {
       createOpenApiRouter({
         title: 'test-api',
         version: '1.0.0',
+        routeRegistry: [],
         middleware: [denyAll],
       })
     );
@@ -51,16 +56,10 @@ describe('UNIT: createOpenApiRouter', () => {
   });
 
   describe('with routes registered via defineRoute', () => {
-    let initialLength: number;
-
-    // A dedicated app/router, not the outer describe's shared one -- that
-    // one already cached an (empty) document from the tests above, and
-    // createOpenApiRouter never rebuilds once cached.
+    const { defineRoute, routeRegistry } = createRouteRegistry();
     const appWithRoutes = express();
 
     before(() => {
-      initialLength = routeRegistry.length;
-
       const router = express.Router();
       defineRoute(router, {
         method: 'post',
@@ -145,12 +144,12 @@ describe('UNIT: createOpenApiRouter', () => {
 
       appWithRoutes.use(
         '/openapi.json',
-        createOpenApiRouter({ title: 'test-api', version: '1.0.0' })
+        createOpenApiRouter({
+          title: 'test-api',
+          version: '1.0.0',
+          routeRegistry,
+        })
       );
-    });
-
-    after(() => {
-      routeRegistry.length = initialLength;
     });
 
     it('describes a path parameter using its own Joi schema, not a bare string fallback', async () => {
