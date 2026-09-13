@@ -16,10 +16,8 @@ import type { Provider } from './provider.ts';
  * inference. Only works for string literal paths. Two cases it can't see:
  * a route mounted via a RegExp path, or one whose params come from a
  * parent router's mergeParams mount rather than this router's own
- * relative path. For either, cast `req.params` explicitly inside the
- * handler -- TypeScript can't mix an explicit type argument for one
- * generic parameter here with inference for the others, so there's no
- * generic-argument escape hatch, just a local cast where it's needed.
+ * relative path. For either, pass `params` explicitly (see below) instead
+ * of relying on inference here.
  */
 type ExtractRouteParams<Path extends string> =
   Path extends `${string}:${infer Param}/${infer Rest}`
@@ -28,24 +26,64 @@ type ExtractRouteParams<Path extends string> =
       ? Record<Param, string>
       : Record<string, never>;
 
+type ParamsFromNames<Names extends readonly string[]> = Record<
+  Names[number],
+  string
+>;
+
+// Checked against an empty tuple, not `undefined` -- `undefined extends T`
+// can be true for surprisingly many T under a loose tsconfig, which would
+// make an `undefined`-based check here unreliable across consumers with
+// different strictness settings.
+type ResolvedParams<
+  Path extends string,
+  ParamNames extends readonly string[],
+> = ParamNames extends readonly []
+  ? ExtractRouteParams<Path>
+  : ParamsFromNames<ParamNames>;
+
 type InferJoi<S> = S extends Schema<infer T> ? T : never;
+
+/**
+ * Translates this route's own `:name`/`:name?`/`:name(regex)` segments into
+ * OpenAPI's `{name}` placeholder syntax, for deriving `docPath` from
+ * `prefix + path` instead of restating the whole absolute path by hand.
+ */
+function pathToDocSegment(path: string): string {
+  // Express's real modifier order is constraint-then-optional
+  // (`:name(pattern)?`), not the reverse -- matching `?` before the
+  // constraint group would leave a dangling, un-replaced `?` in the
+  // output for a segment that's both constrained and optional.
+  return path === '/' ? '' : path.replace(/:(\w+)(?:\([^)]*\))?\??/g, '{$1}');
+}
 
 export interface RouteDef<
   Path extends string,
   Locals extends object,
   Body extends Schema | undefined,
   Query extends Schema | undefined,
+  ParamNames extends readonly string[] = [],
 > {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete';
   /** Path as passed to `router[method]` -- relative to wherever this router is mounted. */
   path: Path;
   /**
-   * Full absolute path for the OpenAPI document, including every param --
-   * this router's own mount point isn't visible from inside the router
-   * file, so it can't be derived automatically. Same `{name}` placeholders
-   * as the real mount path used to reach this router.
+   * Full absolute path for the OpenAPI document, including every param,
+   * using `{name}` placeholders. Only needed when `prefix` can't express
+   * it (see `prefix` below) -- e.g. a parent mergeParams-derived param
+   * that appears in neither `prefix` nor `path` for this to translate.
    */
-  docPath: string;
+  docPath?: string;
+  /**
+   * This router's absolute mount prefix (already using OpenAPI's `{name}`
+   * placeholder syntax for any params in the prefix itself, e.g.
+   * `/carts/{cartId}/items/{itemId}`) -- when given, `docPath` is derived
+   * as `prefix + path` (translating this route's own
+   * `:name`/`:name?`/`:name(regex)` segments to `{name}`) instead of
+   * needing the full absolute path restated by hand on every defineRoute
+   * call. Ignored if `docPath` is given explicitly.
+   */
+  prefix?: string;
   /**
    * OpenAPI operationId -- generated clients (openapi-generator-cli's
    * typescript-fetch, in particular) name their methods from this when
@@ -74,6 +112,18 @@ export interface RouteDef<
     { description: string; schema?: Record<string, unknown> }
   >;
   /**
+   * Explicit path param names, for paths ExtractRouteParams can't infer
+   * from the string literal alone: an inline regex constraint
+   * (`:name(...)`), an optional segment (`:name?`), or a param that comes
+   * from a parent router's mergeParams mount rather than this router's
+   * own relative path. Overrides inference the same way `operationId` can
+   * be stated explicitly instead of relying on the handler's function
+   * name. Needs `as const` at the call site (e.g. `['cartId', 'itemId']
+   * as const`) for TypeScript to see it as a literal tuple rather than
+   * plain `string[]`.
+   */
+  params?: ParamNames;
+  /**
    * Same providers you'd pass to a provideAll()-style combinator today --
    * `Locals` is inferred from their combined Provider<L> type, so
    * res.locals is typed in `handler` without restating it. A plain
@@ -83,7 +133,7 @@ export interface RouteDef<
    */
   middleware?: Provider<Locals>[] | express.RequestHandler[];
   handler: express.RequestHandler<
-    ExtractRouteParams<Path>,
+    ResolvedParams<Path, ParamNames>,
     unknown,
     InferJoi<Body>,
     InferJoi<Query>,
@@ -91,12 +141,21 @@ export interface RouteDef<
   >;
 }
 
-export type AnyRouteDef = RouteDef<
-  string,
-  object,
-  Schema | undefined,
-  Schema | undefined
->;
+// docPath is optional on RouteDef itself (a caller can derive it from
+// `prefix` instead) but always resolved to a real string by the time
+// defineRoute pushes an entry into routeRegistry -- narrowed back to
+// required here so document.ts doesn't have to guard against `undefined`
+// for a case that can't actually happen once a route is registered.
+export type AnyRouteDef = Omit<
+  RouteDef<
+    string,
+    object,
+    Schema | undefined,
+    Schema | undefined,
+    readonly string[]
+  >,
+  'docPath'
+> & { docPath: string };
 
 /**
  * Creates an independent route registry and a `defineRoute` bound to it --
@@ -119,9 +178,28 @@ export function createRouteRegistry() {
     Locals extends object = Record<string, never>,
     Body extends Schema | undefined = undefined,
     Query extends Schema | undefined = undefined,
-  >(router: express.Router, def: RouteDef<Path, Locals, Body, Query>) {
+    ParamNames extends readonly string[] = [],
+  >(
+    router: express.Router,
+    def: RouteDef<Path, Locals, Body, Query, ParamNames>
+  ) {
     const operationId = def.operationId ?? (def.handler.name || undefined);
-    routeRegistry.push({ ...def, operationId } as unknown as AnyRouteDef);
+    const docPath =
+      def.docPath ??
+      (def.prefix !== undefined
+        ? `${def.prefix}${pathToDocSegment(def.path)}`
+        : undefined);
+    if (!docPath) {
+      throw new Error(
+        `defineRoute: ${def.method.toUpperCase()} ${def.path} needs either docPath or prefix`
+      );
+    }
+
+    routeRegistry.push({
+      ...def,
+      operationId,
+      docPath,
+    } as unknown as AnyRouteDef);
 
     const validators = [
       def.request?.params && paramValidator(def.request.params),

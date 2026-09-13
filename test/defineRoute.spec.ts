@@ -86,21 +86,20 @@ describe('UNIT: defineRoute', () => {
     expect(res.statusCode).to.equal(400);
   });
 
-  it('mergeParams-derived params not visible in the router-relative path need a local cast, not a generic argument', async () => {
-    const { defineRoute } = createRouteRegistry();
+  it('mergeParams-derived params not visible in the router-relative path can be typed via `params`, not a cast', async () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router({ mergeParams: true });
 
     defineRoute(router, {
       method: 'delete',
       path: '/',
-      docPath: '/carts/{cartId}/items/{itemId}',
+      prefix: '/carts/{cartId}/items/{itemId}',
+      params: ['cartId', 'itemId'] as const,
       handler: (req, res) => {
         // '/' alone has nothing for ExtractRouteParams to find -- cartId/itemId
-        // come from the parent mount below, so they need a local cast here.
-        const { cartId, itemId } = req.params as unknown as {
-          cartId: string;
-          itemId: string;
-        };
+        // come from the parent mount below, so `params` overrides inference
+        // instead of needing a cast.
+        const { cartId, itemId } = req.params;
         res.status(200).json({ cartId, itemId });
       },
     });
@@ -112,6 +111,72 @@ describe('UNIT: defineRoute', () => {
 
     expect(res.statusCode).to.equal(200);
     expect(res.body).to.eql({ cartId: 'p1', itemId: 'i1' });
+    expect(routeRegistry.at(-1)).to.include({
+      docPath: '/carts/{cartId}/items/{itemId}',
+    });
+  });
+
+  // Express 4's path-to-regexp accepted inline regex constraints
+  // (`:name(pattern)`) and a trailing `?` modifier directly in the path
+  // string; Express 5's router no longer parses either at all (it throws
+  // synchronously on registration, even for a bare `:name?`) -- newer
+  // syntax uses `{...}` optional groups instead. defineRoute's own
+  // pathToDocSegment translation still has to handle the legacy syntax
+  // for an Express-4 consumer, so these use a minimal stub router (just a
+  // recorded method call, not real path-to-regexp parsing) to test that
+  // translation without depending on which Express major is installed.
+  function stubRouter(): express.Router {
+    return { get: () => undefined } as unknown as express.Router;
+  }
+
+  it('an inline regex-constrained param can be typed via `params`, not a cast', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
+
+    defineRoute(stubRouter(), {
+      method: 'get',
+      path: '/:slug([0-9a-z-]+)',
+      prefix: '/widgets',
+      params: ['slug'] as const,
+      handler: (req, res) => {
+        const { slug } = req.params;
+        res.status(200).json({ slug });
+      },
+    });
+
+    expect(routeRegistry.at(-1)).to.include({ docPath: '/widgets/{slug}' });
+  });
+
+  it('derives docPath via prefix for a segment that is both regex-constrained and optional', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry();
+
+    defineRoute(stubRouter(), {
+      method: 'get',
+      path: '/:slug([0-9a-z-]+)?',
+      prefix: '/widgets',
+      params: ['slug'] as const,
+      handler: (req, res) => {
+        const { slug } = req.params;
+        res.status(200).json({ slug });
+      },
+    });
+
+    // Express's real modifier order is constraint-then-optional -- a
+    // regex matching `?` before the constraint group would leave a
+    // dangling, un-replaced `?` in the derived docPath.
+    expect(routeRegistry.at(-1)).to.include({ docPath: '/widgets/{slug}' });
+  });
+
+  it('throws at registration time when neither docPath nor prefix is given', () => {
+    const { defineRoute } = createRouteRegistry();
+    const router = express.Router();
+
+    expect(() => {
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        handler: (_req, res) => res.status(200).json([]),
+      });
+    }).to.throw(/needs either docPath or prefix/);
   });
 
   it('infers Locals from Provider<L> middleware, the same merging a provideAll()-style combinator does for the type system', async () => {
