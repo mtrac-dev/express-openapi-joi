@@ -294,6 +294,25 @@ function responses(
   );
 }
 
+/**
+ * Same idea as mergeParameters/mergeRequestBody, but for responses: without
+ * this, one registration's own responses (e.g. a role-gated 403) silently
+ * vanished behind whatever the last-registered registration in the stack
+ * documented, since `responses` was overwritten wholesale rather than
+ * merged like every other field sharing a docPath+method. Only unions
+ * distinct status codes -- two registrations that both document the SAME
+ * status code with a different schema still just have the later one win,
+ * same as mergeRequestBody's behavior before it added oneOf-wrapping;
+ * left that as a follow-up for if it's ever actually needed, since it
+ * hasn't come up.
+ */
+function mergeResponses(
+  existing: OperationObject['responses'],
+  incoming: OperationObject['responses']
+): OperationObject['responses'] {
+  return { ...existing, ...incoming };
+}
+
 function parameterKey(p: ParameterObject) {
   return `${p.in}:${p.name}`;
 }
@@ -514,7 +533,10 @@ export function buildOpenApiDocument(
         parameters
       ),
       ...(mergedRequestBody && { requestBody: mergedRequestBody }),
-      responses: responses(route.responses ?? { 200: { description: 'OK' } }),
+      responses: mergeResponses(
+        existing?.responses,
+        responses(route.responses ?? { 200: { description: 'OK' } })
+      ),
       // mergeSecurity's own SecurityRequirementObject (security.ts) types each
       // scheme's scope list as `string[] | undefined` (Partial<Record<...>>)
       // to stay a plain, dependency-free type for consumers; it never

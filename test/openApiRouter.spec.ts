@@ -218,6 +218,29 @@ describe('UNIT: createOpenApiRouter', () => {
         handler: (_req, res) => res.status(200).json([]),
       });
       defineRoute(router, {
+        method: 'get',
+        path: '/thingamabobs',
+        docPath: '/thingamabobs',
+        summary: 'List thingamabobs, as an admin',
+        middleware: [apiKeyAuth],
+        // Documents a 403 not repeated by the registration below --
+        // should still show up in the merged operation, not just the
+        // 200 the last-registered one documents.
+        responses: {
+          200: { description: 'OK' },
+          403: { description: 'Not an admin' },
+        },
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/thingamabobs',
+        docPath: '/thingamabobs',
+        summary: 'List thingamabobs',
+        security: ['public'],
+        handler: (_req, res) => res.status(200).json([]),
+      });
+      defineRoute(router, {
         method: 'post',
         path: '/gearboxes',
         docPath: '/gearboxes',
@@ -388,6 +411,14 @@ describe('UNIT: createOpenApiRouter', () => {
         description: 'The doodad',
         content: { 'application/json': { schema: { type: 'object' } } },
       });
+    });
+
+    it('merges responses across a shared docPath+method instead of overwriting', async () => {
+      const res = await testRequest(appWithRoutes).get('/openapi.json');
+
+      const { responses } = res.body.paths['/thingamabobs'].get;
+      expect(responses['403']).to.eql({ description: 'Not an admin' });
+      expect(responses['200']).to.eql({ description: 'OK' });
     });
 
     it("normalizes a custom Joi extension's type to a real JSON Schema primitive", async () => {
