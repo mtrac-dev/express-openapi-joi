@@ -22,6 +22,107 @@ npm install @mtrac/express-openapi-joi
 `express` and `joi` are peer dependencies — install whichever versions your
 project already uses.
 
+## Usage
+
+Create one registry per app (or per test), register routes against it with
+`defineRoute`, then serve the generated document with `createOpenApiRouter`:
+
+```ts
+import express from 'express';
+import Joi from 'joi';
+import { createRouteRegistry, createOpenApiRouter } from '@mtrac/express-openapi-joi';
+
+const { defineRoute, routeRegistry } = createRouteRegistry();
+
+const widgetsRouter = express.Router();
+defineRoute(widgetsRouter, {
+  method: 'post',
+  path: '/:id',
+  docPath: '/widgets/{id}',
+  summary: 'Create a widget',
+  request: {
+    params: Joi.object({ id: Joi.string().uuid().required() }),
+    body: Joi.object({ name: Joi.string().required() }),
+  },
+  handler: (req, res) => {
+    // req.params.id and req.body.name are typed from the schemas above.
+    res.status(201).json({ id: req.params.id, name: req.body.name });
+  },
+});
+
+const app = express();
+app.use(express.json());
+app.use('/widgets', widgetsRouter);
+app.use(
+  '/openapi.json',
+  createOpenApiRouter({
+    title: 'my-service',
+    version: '1.0.0',
+    routeRegistry,
+    // Optional: gate the document the same way any other internal route
+    // is gated in this app (an API-key check, auth middleware, ...).
+    middleware: [myApiKeyAuthMiddleware],
+  }),
+);
+```
+
+### Security schemes
+
+This library doesn't define any security schemes itself -- pass your own
+`components.securitySchemes` map, and either tag the enforcing middleware
+with `securedBy` (for a simple, fixed check) or state `security` explicitly
+on the route:
+
+```ts
+import { securedBy, createOpenApiRouter } from '@mtrac/express-openapi-joi';
+
+const SECURITY_SCHEMES = {
+  ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
+};
+
+const apiKeyAuth = securedBy(myApiKeyAuthMiddleware, 'ApiKeyAuth');
+
+defineRoute(widgetsRouter, {
+  method: 'get',
+  path: '/',
+  docPath: '/widgets',
+  middleware: [apiKeyAuth], // security: ['ApiKeyAuth'] is inferred automatically
+  handler: (_req, res) => res.status(200).json([]),
+});
+
+app.use(
+  '/openapi.json',
+  createOpenApiRouter({
+    title: 'my-service',
+    version: '1.0.0',
+    routeRegistry,
+    securitySchemes: SECURITY_SCHEMES,
+  }),
+);
+```
+
+### Swapping into an app that already hand-rolls this (e.g. registry.ts/security.ts/openapiRouter.ts)
+
+If an app already has its own local `defineRoute`/`buildOpenApiDocument`
+implementation, the usual shape after adopting this package is:
+
+- **`registry.ts`** — replace the local `createRouteRegistry`/`defineRoute`
+  implementation with `export const { defineRoute, routeRegistry } =
+  createRouteRegistry();` from this package.
+- **`security.ts`** — keep the app's own `SECURITY_SCHEMES` const (this
+  package doesn't know your schemes), but import `securedBy`/
+  `inferSecurity`/`mergeSecurity` and the `SecurityScheme`/
+  `SecurityRequirement`/`SecurityRequirementObject` types from this package
+  instead of defining them locally.
+- **`openapiRouter.ts`** — replace the hand-rolled router with
+  `createOpenApiRouter({ title, version, routeRegistry, securitySchemes:
+  SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
+
+Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
+imported) just needs its import path repointed at this package -- the
+call shape (`method`/`path`/`docPath`/`prefix`/`params`/`request`/
+`responses`/`security`/`middleware`/`handler`) is unchanged.
+
 ## Development
 
 ```bash
