@@ -74,12 +74,79 @@ function normalizeCustomJoiTypes(
   return normalized;
 }
 
-/** joi-to-json's own types declare its return value as `any`. */
-function toJsonSchema(schema: unknown, fallbackType?: string): SchemaObject {
+/**
+ * joi-to-json's own types declare its return value as `any`. A `.id()`'d
+ * schema (or one with an `.id()`'d schema nested inside it) also carries a
+ * `schemas` companion object, keyed by id, holding each referenced schema's
+ * own full definition -- convertJoiSchema (below) is what actually threads
+ * that into components.schemas; call sites needing a plain schema value go
+ * through it, not this function directly.
+ */
+function toJsonSchema(
+  schema: unknown,
+  fallbackType?: string
+): SchemaObject & { schemas?: Record<string, SchemaObject> } {
   return normalizeCustomJoiTypes(
     joiToJson(schema, 'open-api-3.1'),
     fallbackType
-  ) as SchemaObject;
+  ) as SchemaObject & { schemas?: Record<string, SchemaObject> };
+}
+
+/**
+ * joi-to-json returns a schema's own converted shape directly UNLESS the
+ * Joi schema (or anything nested inside it) carries a `.id(...)` -- then it
+ * returns the converted shape (or, when the WHOLE schema is itself id'd,
+ * just `{ $ref }`) plus a sibling `schemas` object holding each referenced
+ * id's own full definition, keyed by id, meant for `components.schemas`.
+ * This merges any such definitions into the shared, document-wide
+ * `componentSchemas` accumulator threaded through the whole document build
+ * (deduping an identical repeat -- the same `.id()`'d schema converted at
+ * another call site -- and throwing on a genuine collision between two
+ * differently-shaped schemas sharing an id, so a mistake fails loudly at
+ * generation time instead of silently documenting the wrong thing), and
+ * returns the schema with `schemas` stripped off, ready to use directly
+ * wherever a schema value is needed.
+ */
+function convertJoiSchema(
+  schema: unknown,
+  componentSchemas: Record<string, SchemaObject>,
+  fallbackType?: string
+): SchemaObject {
+  const { schemas: refs, ...rest } = toJsonSchema(schema, fallbackType);
+
+  for (const [name, def] of Object.entries(refs ?? {})) {
+    const existing = componentSchemas[name] as SchemaObject | undefined;
+    if (existing && JSON.stringify(existing) !== JSON.stringify(def)) {
+      throw new Error(
+        `buildOpenApiDocument: two different Joi schemas both used .id('${name}') with different shapes -- give one of them a different id.`
+      );
+    }
+    componentSchemas[name] = def;
+  }
+
+  return rest;
+}
+
+/**
+ * A converted object schema is either the plain shape directly (properties
+ * reachable at the top level) or `{ $ref: '#/components/schemas/X' }` (the
+ * whole thing was itself `.id()`'d) -- callers that need to look inside an
+ * object schema's own properties (path/query/header extraction below) need
+ * to dereference the second case via the same componentSchemas map
+ * convertJoiSchema just populated.
+ */
+function resolveObjectSchema(
+  schema: SchemaObject,
+  componentSchemas: Record<string, SchemaObject>
+): SchemaObject {
+  if (!schema.$ref) return schema;
+  const parts = schema.$ref.split('/');
+  // convertJoiSchema always populates componentSchemas with a $ref's target
+  // before returning it, so this lookup can't actually miss today -- the
+  // `?? {}` is a safety net against a future change to call order, not a
+  // case exercised (or exercisable without one) right now.
+  /* c8 ignore next */
+  return componentSchemas[parts[parts.length - 1]] ?? {};
 }
 
 // Bounded negated-class quantifier between two literal braces -- no
@@ -98,7 +165,8 @@ const PATH_PARAM_RE = /\{([^}]+)\}/g;
  */
 function pathParameters(
   docPath: string,
-  paramsSchema?: unknown
+  paramsSchema: unknown,
+  componentSchemas: Record<string, SchemaObject>
 ): ParameterObject[] {
   const names = [...docPath.matchAll(PATH_PARAM_RE)].map(
     ([, paramName]) => paramName
@@ -106,7 +174,10 @@ function pathParameters(
   if (names.length === 0) return [];
 
   const paramsJsonSchema = paramsSchema
-    ? toJsonSchema(paramsSchema)
+    ? resolveObjectSchema(
+        convertJoiSchema(paramsSchema, componentSchemas),
+        componentSchemas
+      )
     : undefined;
 
   return names.map((paramName) => ({
@@ -123,10 +194,16 @@ function pathParameters(
  * OpenAPI parameters at all, and a generated client method ends up with no
  * way to pass query values through.
  */
-function queryParameters(querySchema?: unknown): ParameterObject[] {
+function queryParameters(
+  querySchema: unknown,
+  componentSchemas: Record<string, SchemaObject>
+): ParameterObject[] {
   if (!querySchema) return [];
 
-  const queryJsonSchema = toJsonSchema(querySchema);
+  const queryJsonSchema = resolveObjectSchema(
+    convertJoiSchema(querySchema, componentSchemas),
+    componentSchemas
+  );
   const required = queryJsonSchema.required ?? [];
 
   return Object.entries(queryJsonSchema.properties ?? {}).map(
@@ -144,10 +221,16 @@ function queryParameters(querySchema?: unknown): ParameterObject[] {
  * defineRoute already validates headers against this schema at runtime
  * (via headerValidator) -- this is just the document-side counterpart.
  */
-function headerParameters(headersSchema?: unknown): ParameterObject[] {
+function headerParameters(
+  headersSchema: unknown,
+  componentSchemas: Record<string, SchemaObject>
+): ParameterObject[] {
   if (!headersSchema) return [];
 
-  const headersJsonSchema = toJsonSchema(headersSchema);
+  const headersJsonSchema = resolveObjectSchema(
+    convertJoiSchema(headersSchema, componentSchemas),
+    componentSchemas
+  );
   const required = headersJsonSchema.required ?? [];
 
   return Object.entries(headersJsonSchema.properties ?? {}).map(
@@ -292,17 +375,20 @@ export function buildOpenApiDocument(
 ): OpenApiDocument {
   const paths: Record<string, Record<string, OperationObject>> = {};
   const summariesSeen = new Map<string, string[]>();
+  const componentSchemas: Record<string, SchemaObject> = {};
 
   for (const route of routeRegistry) {
     const parameters = [
-      ...headerParameters(route.request?.headers),
-      ...pathParameters(route.docPath, route.request?.params),
-      ...queryParameters(route.request?.query),
+      ...headerParameters(route.request?.headers, componentSchemas),
+      ...pathParameters(route.docPath, route.request?.params, componentSchemas),
+      ...queryParameters(route.request?.query, componentSchemas),
     ];
     const requestBody: RequestBodyObject | undefined = route.request?.body
       ? {
           content: {
-            'application/json': { schema: toJsonSchema(route.request.body) },
+            'application/json': {
+              schema: convertJoiSchema(route.request.body, componentSchemas),
+            },
           },
         }
       : undefined;
@@ -369,6 +455,11 @@ export function buildOpenApiDocument(
     info: { title, version },
     ...(servers && { servers: servers.map((url) => ({ url })) }),
     paths,
-    components: { securitySchemes },
+    components: {
+      ...(Object.keys(securitySchemes).length > 0 && { securitySchemes }),
+      ...(Object.keys(componentSchemas).length > 0 && {
+        schemas: componentSchemas,
+      }),
+    },
   };
 }

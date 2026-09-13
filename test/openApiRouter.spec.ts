@@ -456,4 +456,93 @@ describe('UNIT: createOpenApiRouter', () => {
       expect(siteParam).to.include({ required: true });
     });
   });
+
+  describe('with a Joi schema using .id()', () => {
+    it('produces a $ref requestBody schema and populates components.schemas', async () => {
+      const { defineRoute, routeRegistry } = createRouteRegistry();
+      const router = express.Router();
+      const schema = Joi.object({ name: Joi.string().required() }).id('Widget');
+      defineRoute(router, {
+        method: 'post',
+        path: '/',
+        docPath: '/id-test-widgets',
+        summary: 'Create a widget',
+        request: { body: schema },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      const app = express();
+      app.use(
+        '/openapi.json',
+        createOpenApiRouter({ title: 't', version: '1', routeRegistry })
+      );
+
+      const res = await testRequest(app).get('/openapi.json');
+
+      expect(
+        res.body.paths['/id-test-widgets'].post.requestBody.content[
+          'application/json'
+        ].schema
+      ).to.eql({ $ref: '#/components/schemas/Widget' });
+      expect(res.body.components.schemas.Widget).to.eql({
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      });
+    });
+
+    it("dereferences a header schema whose whole wrapper is id'd back to its own properties", async () => {
+      const { defineRoute, routeRegistry } = createRouteRegistry();
+      const router = express.Router();
+      const headers = Joi.object({
+        'x-thing': Joi.string().required(),
+      }).id('ThingHeader');
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        docPath: '/id-test-thing',
+        summary: 'Get a thing',
+        request: { headers },
+        handler: (_req, res) => res.status(200).json({}),
+      });
+      const app = express();
+      app.use(
+        '/openapi.json',
+        createOpenApiRouter({ title: 't', version: '1', routeRegistry })
+      );
+
+      const res = await testRequest(app).get('/openapi.json');
+      const param = res.body.paths['/id-test-thing'].get.parameters.find(
+        (p: { name: string }) => p.name === 'x-thing'
+      );
+
+      expect(param).to.include({ required: true });
+      expect(res.body.components.schemas.ThingHeader).to.exist;
+    });
+
+    it('throws when two different Joi schemas use the same id', () => {
+      const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
+      const router = express.Router();
+      defineRoute(router, {
+        method: 'post',
+        path: '/a',
+        docPath: '/id-test-collision-a',
+        summary: 'A',
+        request: { body: Joi.object({ a: Joi.string() }).id('Collision') },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+      defineRoute(router, {
+        method: 'post',
+        path: '/b',
+        docPath: '/id-test-collision-b',
+        summary: 'B',
+        request: { body: Joi.object({ b: Joi.number() }).id('Collision') },
+        handler: (_req, res) => res.status(201).json({}),
+      });
+
+      expect(() => buildOpenApiDocument({ title: 't', version: '1' })).to.throw(
+        /used \.id\('Collision'\)/
+      );
+    });
+  });
 });
