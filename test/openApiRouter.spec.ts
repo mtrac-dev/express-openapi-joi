@@ -3,7 +3,10 @@ import Joi from 'joi';
 import { expect } from 'chai';
 
 import { createRouteRegistry } from '../src/defineRoute.ts';
-import { buildOpenApiDocument } from '../src/document.ts';
+import {
+  applyDiscriminatorMappings,
+  buildOpenApiDocument,
+} from '../src/document.ts';
 import { createOpenApiRouter } from '../src/openApiRouter.ts';
 import { securedBy } from '../src/security.ts';
 import { testRequest } from './helpers/request.ts';
@@ -816,5 +819,106 @@ describe('UNIT: createOpenApiRouter', () => {
         description: 'common server error',
       });
     });
+  });
+});
+
+describe('UNIT: applyDiscriminatorMappings', () => {
+  it("derives a discriminator mapping from each oneOf variant's own `const` property", () => {
+    const componentSchemas = {
+      Shape: {
+        discriminator: { propertyName: 'kind' },
+        oneOf: [
+          { $ref: '#/components/schemas/Circle' },
+          { $ref: '#/components/schemas/Square' },
+        ],
+      },
+      Circle: {
+        type: 'object',
+        properties: { kind: { const: 'circle' }, radius: { type: 'number' } },
+      },
+      Square: {
+        type: 'object',
+        properties: { kind: { const: 'square' }, side: { type: 'number' } },
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- hand-built fixture data, not a real generated schema
+    } as Record<string, any>;
+
+    applyDiscriminatorMappings(componentSchemas);
+
+    expect(componentSchemas.Shape.discriminator.mapping).to.eql({
+      circle: '#/components/schemas/Circle',
+      square: '#/components/schemas/Square',
+    });
+  });
+
+  it("derives a discriminator mapping from a variant's own single-value `enum` property", () => {
+    const componentSchemas = {
+      Shape: {
+        discriminator: { propertyName: 'kind' },
+        oneOf: [{ $ref: '#/components/schemas/Circle' }],
+      },
+      Circle: {
+        type: 'object',
+        properties: { kind: { enum: ['circle'] } },
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- hand-built fixture data, not a real generated schema
+    } as Record<string, any>;
+
+    applyDiscriminatorMappings(componentSchemas);
+
+    expect(componentSchemas.Shape.discriminator.mapping).to.eql({
+      circle: '#/components/schemas/Circle',
+    });
+  });
+
+  it('leaves a schema with no discriminator, or an already-mapped one, untouched', () => {
+    const componentSchemas = {
+      PlainObject: { type: 'object', properties: {} },
+      AlreadyMapped: {
+        discriminator: {
+          propertyName: 'kind',
+          mapping: { circle: '#/components/schemas/Circle' },
+        },
+        oneOf: [{ $ref: '#/components/schemas/Circle' }],
+      },
+      NoOneOf: { discriminator: { propertyName: 'kind' } },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- hand-built fixture data, not a real generated schema
+    } as Record<string, any>;
+    const before = JSON.parse(JSON.stringify(componentSchemas)) as unknown;
+
+    applyDiscriminatorMappings(componentSchemas);
+
+    expect(componentSchemas).to.eql(before);
+  });
+
+  it("throws when a oneOf entry isn't a $ref", () => {
+    const componentSchemas = {
+      Shape: {
+        discriminator: { propertyName: 'kind' },
+        oneOf: [{ type: 'object', properties: { kind: { const: 'circle' } } }],
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- hand-built fixture data, not a real generated schema
+    } as Record<string, any>;
+
+    expect(() => {
+      applyDiscriminatorMappings(componentSchemas);
+    }).to.throw(/has a non-\$ref oneOf entry/);
+  });
+
+  it("throws when a variant doesn't narrow its own discriminator property to a single string literal", () => {
+    const componentSchemas = {
+      Shape: {
+        discriminator: { propertyName: 'kind' },
+        oneOf: [{ $ref: '#/components/schemas/Circle' }],
+      },
+      Circle: { type: 'object', properties: { kind: { type: 'string' } } },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- hand-built fixture data, not a real generated schema
+    } as Record<string, any>;
+
+    expect(() => {
+      applyDiscriminatorMappings(componentSchemas);
+    }).to.throw(
+      /doesn't narrow its own 'kind' property to a single string literal/
+    );
   });
 });

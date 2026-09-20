@@ -1,4 +1,5 @@
 export {
+  applyDiscriminatorMappings,
   buildOpenApiDocument,
   mergeComponentSchema,
   type OpenApiDocument,

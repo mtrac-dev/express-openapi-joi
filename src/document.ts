@@ -148,6 +148,82 @@ export function mergeComponentSchema(
   componentSchemas[name] = def;
 }
 
+const COMPONENT_SCHEMA_REF_RE = /^#\/components\/schemas\/(.+)$/;
+
+/**
+ * A TypeScript union response type generated via `.../typegen`'s
+ * `generateResponseSchema` -- given a `@discriminator <propertyName>` JSDoc
+ * tag and `discriminatorType: 'open-api'` -- comes out as a real OpenAPI
+ * `{ discriminator: { propertyName }, oneOf }` shape, but the generator
+ * never populates `discriminator.mapping` (the part that says which
+ * literal discriminator value corresponds to which `oneOf` variant).
+ * Without it, a generated client can't build the discriminator's
+ * value->variant switch at all -- every case falls through to a default,
+ * and the union itself can come out as a bare, uninstantiable type, even
+ * though each variant's own shape generates correctly.
+ *
+ * Generic over every discriminated union in `componentSchemas` (not
+ * hardcoded to one type name): for any schema shaped like the above with
+ * no `mapping` of its own already, derives one by reading each `oneOf`
+ * variant's own discriminator-property literal (a JSON Schema `const`, or
+ * a single-value `enum`) -- throwing, not skipping, if a variant doesn't
+ * actually narrow that property to one literal value, since a mapping
+ * this function silently left off would leave that variant unreachable at
+ * runtime exactly as if this fix were never applied.
+ *
+ * Call this AFTER merging in any typegen-generated schemas (e.g. via
+ * ./typegen's `applyGeneratedResponseSchemas`) -- a discriminated union
+ * that only exists because of that step isn't in `componentSchemas` yet
+ * if this runs any earlier.
+ */
+export function applyDiscriminatorMappings(
+  componentSchemas: Record<string, SchemaObject>
+): void {
+  for (const [schemaName, schema] of Object.entries(componentSchemas)) {
+    if (
+      !schema.discriminator ||
+      schema.discriminator.mapping ||
+      !Array.isArray(schema.oneOf)
+    ) {
+      continue;
+    }
+
+    const { propertyName } = schema.discriminator;
+    const mapping: Record<string, string> = {};
+    for (const variant of schema.oneOf) {
+      const ref = variant.$ref;
+      const match = ref?.match(COMPONENT_SCHEMA_REF_RE);
+      if (!ref || !match) {
+        throw new Error(
+          `applyDiscriminatorMappings: '${schemaName}' has a non-$ref oneOf entry -- every discriminated union variant must be a named, referenced schema.`
+        );
+      }
+      const [, variantName] = match;
+      const variantSchema = componentSchemas[variantName] as
+        SchemaObject | undefined;
+      const propSchema = variantSchema?.properties?.[propertyName] as
+        SchemaObject | undefined;
+      // SchemaObject's own `const`/`enum` fields are typed `any` (they can
+      // genuinely hold any JSON value) -- narrowed to `unknown` here since
+      // only a single string literal is ever a valid discriminator value.
+      const constValue = propSchema?.const as unknown;
+      const enumValues = propSchema?.enum as unknown[] | undefined;
+      const literalValue =
+        constValue ??
+        (Array.isArray(enumValues) && enumValues.length === 1
+          ? enumValues[0]
+          : undefined);
+      if (typeof literalValue !== 'string') {
+        throw new Error(
+          `applyDiscriminatorMappings: '${schemaName}''s variant '${variantName}' doesn't narrow its own '${propertyName}' property to a single string literal -- can't derive a discriminator mapping entry for it.`
+        );
+      }
+      mapping[literalValue] = ref;
+    }
+    schema.discriminator.mapping = mapping;
+  }
+}
+
 /**
  * joi-to-json returns a schema's own converted shape directly UNLESS the
  * Joi schema (or anything nested inside it) carries a `.id(...)` -- then it
