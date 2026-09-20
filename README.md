@@ -33,7 +33,15 @@ a per-status response map (`res.status(200).json(...)` only accepts a
 `Widget` there), and, paired with the separate `./typegen` subpath export,
 generates `responses[status].schema` from those same TypeScript types
 instead of hand-writing JSON Schema for them. See "Typed responses" and
-"Generating response schemas from TypeScript" below.
+"Generating response schemas from TypeScript" below. `applyDiscriminatorMappings`
+backfills `discriminator.mapping` on any generated discriminated-union
+response type, so generated clients can actually switch on it -- see
+"Discriminator mappings for generated unions" below.
+
+`RouteDef.private` marks a registration as internal-only, so a caller can
+build both a public and a full document from the same registry by
+filtering `routeRegistry` before calling `buildOpenApiDocument` -- see
+"Public/internal document split" below.
 
 See `src/index.ts` for the full public API.
 
@@ -102,7 +110,10 @@ with `securedBy` (for a simple, fixed check) or state `security` explicitly
 on the route:
 
 ```ts
-import { securedBy, createOpenApiRouter } from '@mtrac/express-openapi-joi';
+import {
+  securedBy,
+  createOpenApiRouter,
+} from '@mtrac/express-openapi-joi';
 
 const SECURITY_SCHEMES = {
   ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
@@ -142,6 +153,34 @@ import { createRouteRegistry } from '@mtrac/express-openapi-joi';
 const { defineRoute, routeRegistry, buildOpenApiDocument } =
   createRouteRegistry();
 ```
+
+### Public/internal document split
+
+`RouteDef.private` is a plain data field -- stated explicitly on a
+registration, not inferred from `security` -- so a caller can build two
+documents from the same registry: a full one for internal use, and a
+public one with every `private` registration filtered out before the
+docPath+method merge runs:
+
+```ts
+import { buildOpenApiDocument, routeRegistry } from '@mtrac/express-openapi-joi';
+
+const fullDocument = buildOpenApiDocument(routeRegistry, {
+  title: 't',
+  version: '1',
+});
+const publicDocument = buildOpenApiDocument(
+  routeRegistry.filter((r) => !r.private),
+  { title: 't', version: '1' }
+);
+```
+
+A docPath+method shared by a mix of private/public registrations (e.g. a
+role-gated route falling through to a different handler per caller) still
+merges normally in the public document -- it just documents only the
+non-private branches' own parameters/security, the same as if the private
+branches didn't exist. A docPath+method with no non-private branch at all
+is absent from the public document entirely.
 
 ### Typed responses
 
@@ -232,6 +271,43 @@ this package -- reaching into `ts-json-schema-generator`'s own nested
 `ts.SyntaxKind` numbering) needs `require.resolve`'s `paths` option, which
 has no ESM-native equivalent; this is handled internally via
 `module.createRequire`, not something a caller needs to think about.
+
+### Discriminator mappings for generated unions (`applyDiscriminatorMappings`)
+
+A response type that's a discriminated union (a `@discriminator
+propertyName` JSDoc tag, `discriminatorType: 'open-api'` in the typegen
+config) comes out of `applyGeneratedResponseSchemas` as a real OpenAPI
+`{ discriminator: { propertyName }, oneOf }` shape, but the generator never
+populates `discriminator.mapping` -- the part that says which literal
+discriminator value corresponds to which `oneOf` variant. Without it, a
+generated client can't build the discriminator's value→variant switch at
+all. `applyDiscriminatorMappings` backfills it, generically, for every
+discriminated union in `components.schemas`:
+
+```ts
+import {
+  applyDiscriminatorMappings,
+  buildOpenApiDocument,
+  routeRegistry,
+} from '@mtrac/express-openapi-joi';
+import { applyGeneratedResponseSchemas } from '@mtrac/express-openapi-joi/typegen';
+
+const document = buildOpenApiDocument(routeRegistry, {
+  title: 't',
+  version: '1',
+});
+applyGeneratedResponseSchemas(document, routeFiles, tsconfigPath);
+// Run AFTER applyGeneratedResponseSchemas -- a discriminated union that
+// only exists because of that step isn't in components.schemas yet if
+// this runs any earlier.
+applyDiscriminatorMappings(document.components.schemas);
+```
+
+Each mapping entry is derived from the variant's own discriminator
+property -- a JSON Schema `const`, or a single-value `enum` -- throwing
+rather than skipping if a variant doesn't actually narrow that property to
+one literal value, since a mapping entry silently left off would leave
+that variant unreachable at runtime exactly as if this step had never run.
 
 ### Swapping into an app that already hand-rolls this (e.g. registry.ts/security.ts/openapiRouter.ts)
 
