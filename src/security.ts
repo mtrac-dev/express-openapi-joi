@@ -53,7 +53,10 @@ export function inferSecurity(
   middleware: readonly unknown[] = []
 ): SecurityScheme[] {
   return middleware
-    .map((mw) => (mw as TaggedMiddleware<unknown>)[SECURES_WITH])
+    .map(
+      (mw) =>
+        (mw as TaggedMiddleware<unknown> | null | undefined)?.[SECURES_WITH]
+    )
     .filter((scheme): scheme is SecurityScheme => Boolean(scheme));
 }
 

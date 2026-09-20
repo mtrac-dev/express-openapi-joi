@@ -12,7 +12,7 @@ export {
   type AnyRouteDef,
 } from './defineRoute.ts';
 export { defineRoute, routeRegistry } from './globalRegistry.ts';
-export { type Provider } from './provider.ts';
+export { type Provider, type ProviderLocals } from './provider.ts';
 export {
   securedBy,
   inferSecurity,

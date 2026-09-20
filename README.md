@@ -110,10 +110,7 @@ with `securedBy` (for a simple, fixed check) or state `security` explicitly
 on the route:
 
 ```ts
-import {
-  securedBy,
-  createOpenApiRouter,
-} from '@mtrac/express-openapi-joi';
+import { securedBy, createOpenApiRouter } from '@mtrac/express-openapi-joi';
 
 const SECURITY_SCHEMES = {
   ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
@@ -163,7 +160,10 @@ public one with every `private` registration filtered out before the
 docPath+method merge runs:
 
 ```ts
-import { buildOpenApiDocument, routeRegistry } from '@mtrac/express-openapi-joi';
+import {
+  buildOpenApiDocument,
+  routeRegistry,
+} from '@mtrac/express-openapi-joi';
 
 const fullDocument = buildOpenApiDocument(routeRegistry, {
   title: 't',

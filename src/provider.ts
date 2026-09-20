@@ -18,3 +18,17 @@ export type Provider<
   ResBody = unknown,
   ReqQuery = ParsedQs,
 > = RequestHandler<P, ResBody, never, ReqQuery, ProvidedLocals<L>>;
+
+/**
+ * Recovers the combined `Locals` type from an array of `Provider`s, e.g.
+ * `ProviderLocals<typeof provideAll(userProvider(...), cartProvider())>` --
+ * for a handler that needs to name that type directly (a generic helper
+ * parameterized over it) rather than just letting defineRoute infer it
+ * from `middleware` at the call site.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Provider<L>'s own L is the thing being inferred; there's no narrower bound to give it here.
+export type ProviderLocals<T extends Provider<any>[]> = T extends Provider<
+  infer L
+>[]
+  ? L
+  : never;
