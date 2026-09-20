@@ -11,6 +11,11 @@
       "types": "./dist/esm/index.d.ts",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js"
+    },
+    "./typegen": {
+      "types": "./dist/esm/typegen/index.d.ts",
+      "import": "./dist/esm/typegen/index.js",
+      "require": "./dist/cjs/typegen/index.js"
     }
   },
   "files": [
@@ -63,7 +68,8 @@
   },
   "dependencies": {
     "joi-to-json": "^5.0.5",
-    "openapi3-ts": "^4.6.1"
+    "openapi3-ts": "^4.6.1",
+    "ts-json-schema-generator": "^2.9.0"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.6",

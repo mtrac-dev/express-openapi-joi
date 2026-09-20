@@ -6,4 +6,10 @@ describe('express-openapi-joi', () => {
 
     expect(lib).to.exist;
   });
+
+  it('resolves the ./typegen subpath entrypoint', async () => {
+    const typegen = await import('../src/typegen/index.ts');
+
+    expect(typegen).to.exist;
+  });
 });
