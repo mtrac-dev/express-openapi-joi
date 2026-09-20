@@ -271,6 +271,29 @@ export interface RouteDef<
    */
   security?: SecurityRequirement[];
   /**
+   * Marks this registration as internal-only -- excluded from a "public"
+   * document while still included in a "full" one, for a caller that wants
+   * to build and serve both from the same registry (e.g.
+   * `buildOpenApiDocument(routeRegistry.filter((r) => !r.private), {...})`
+   * for the public one). Not read by anything in this module itself --
+   * filtering happens on the raw `routeRegistry` array a caller passes to
+   * `buildOpenApiDocument`, before its own docPath+method merging runs, so
+   * a docPath+method with more than one registration (e.g. a role-gated
+   * route falling through to a different handler per caller) is filtered
+   * PER REGISTRATION, not merged: the public document only picks up
+   * whichever of that stack's own branches aren't private, documenting
+   * just those branches' own parameters/security, the same way it
+   * naturally would if the private branches didn't exist at all. A stack
+   * with no non-private branch is absent from the public document
+   * entirely, not just missing security.
+   *
+   * Stated explicitly here, not inferred from `security` -- the two are
+   * conceptually different (e.g. a route gated entirely by an API
+   * gateway's own access control, with no Express-side `security` to infer
+   * "private" from at all).
+   */
+  private?: boolean;
+  /**
    * Same providers you'd pass to a provideAll()-style combinator today --
    * `Locals` is inferred from their combined Provider<L> type, so
    * res.locals is typed in `handler` without restating it. A plain

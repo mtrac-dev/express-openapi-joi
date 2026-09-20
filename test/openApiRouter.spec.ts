@@ -3,6 +3,7 @@ import Joi from 'joi';
 import { expect } from 'chai';
 
 import { createRouteRegistry } from '../src/defineRoute.ts';
+import { buildOpenApiDocument } from '../src/document.ts';
 import { createOpenApiRouter } from '../src/openApiRouter.ts';
 import { securedBy } from '../src/security.ts';
 import { testRequest } from './helpers/request.ts';
@@ -686,6 +687,66 @@ describe('UNIT: createOpenApiRouter', () => {
       expect(() =>
         buildOpenApiDocument({ title: 't', version: '1' })
       ).not.to.throw();
+    });
+  });
+
+  describe('RouteDef.private', () => {
+    it('is absent from a document built from a private-filtered registry, but present in the full one', () => {
+      const { defineRoute, routeRegistry } = createRouteRegistry();
+      defineRoute(express.Router(), {
+        method: 'get',
+        path: '/',
+        prefix: '/internal-only',
+        private: true,
+        summary: 'Internal only',
+        handler: (_req, res) => res.status(200).json({}),
+      });
+
+      const publicDoc = buildOpenApiDocument(
+        routeRegistry.filter((route) => !route.private),
+        { title: 't', version: '1' }
+      );
+      expect(publicDoc.paths['/internal-only']).to.be.undefined;
+
+      const fullDoc = buildOpenApiDocument(routeRegistry, {
+        title: 't',
+        version: '1',
+      });
+      expect(fullDoc.paths['/internal-only']).to.exist;
+    });
+
+    it('narrows a shared docPath+method down to just its own non-private branch when filtered', () => {
+      const { defineRoute, routeRegistry } = createRouteRegistry();
+      const router = express.Router();
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        prefix: '/mixed',
+        private: true,
+        summary: 'Internal branch',
+        security: ['InternalAuth'],
+        handler: (_req, res) => res.status(200).json({}),
+      });
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        prefix: '/mixed',
+        summary: 'Public branch',
+        security: ['public'],
+        handler: (_req, res) => res.status(200).json({}),
+      });
+
+      const publicDoc = buildOpenApiDocument(
+        routeRegistry.filter((route) => !route.private),
+        { title: 't', version: '1' }
+      );
+      const op = publicDoc.paths['/mixed'].get;
+
+      expect(op?.summary).to.equal('Public branch');
+      // Merged down to only `[{}]` ("public") once the InternalAuth branch
+      // is filtered out -- omitted entirely by the same isOnlyPublic
+      // optimization a route with no private branch at all already gets.
+      expect(op?.security).to.be.undefined;
     });
   });
 
