@@ -1,7 +1,12 @@
-export { buildOpenApiDocument, type OpenApiDocument } from './document.ts';
+export {
+  buildOpenApiDocument,
+  mergeComponentSchema,
+  type OpenApiDocument,
+} from './document.ts';
 export { createOpenApiRouter } from './openApiRouter.ts';
 export {
   createRouteRegistry,
+  pathToDocSegment,
   type RouteDef,
   type AnyRouteDef,
 } from './defineRoute.ts';

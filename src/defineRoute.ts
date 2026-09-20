@@ -49,8 +49,14 @@ type InferJoi<S> = S extends Schema<infer T> ? T : never;
  * Translates this route's own `:name`/`:name?`/`:name(regex)` segments into
  * OpenAPI's `{name}` placeholder syntax, for deriving `docPath` from
  * `prefix + path` instead of restating the whole absolute path by hand.
+ *
+ * Exported (not just used internally) so a consumer's own static analysis
+ * of its route files -- e.g. a build-time response-schema generator that
+ * needs to resolve the same `docPath` a `prefix`-based defineRoute call
+ * will produce at runtime, from its own reading of the source AST -- can
+ * reuse this exact translation instead of a second, maybe-drifting copy.
  */
-function pathToDocSegment(path: string): string {
+export function pathToDocSegment(path: string): string {
   // Express's real modifier order is constraint-then-optional
   // (`:name(pattern)?`), not the reverse -- matching `?` before the
   // constraint group would leave a dangling, un-replaced `?` in the

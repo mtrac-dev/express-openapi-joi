@@ -123,17 +123,39 @@ function stableStringify(value: unknown): string {
 }
 
 /**
+ * Merges one named schema into the shared, document-wide `componentSchemas`
+ * accumulator -- deduping identical repeats (the same name registered twice
+ * with the same shape, e.g. a `.id()`'d Joi schema converted at another call
+ * site) and throwing on a genuine collision between two differently-shaped
+ * schemas sharing a name, so a mistake fails loudly at generation time
+ * instead of silently documenting the wrong thing. Exported so any other
+ * source of named component schemas (e.g. a TypeScript-type-driven response
+ * generator) can reuse the exact same dedupe-or-throw rule against the same
+ * `components.schemas`, rather than each maintaining its own copy.
+ */
+export function mergeComponentSchema(
+  componentSchemas: Record<string, SchemaObject>,
+  name: string,
+  def: SchemaObject,
+  sourceDescription: string
+): void {
+  const existing = componentSchemas[name] as SchemaObject | undefined;
+  if (existing && stableStringify(existing) !== stableStringify(def)) {
+    throw new Error(
+      `mergeComponentSchema: two different schemas both used the component name '${name}' with different shapes (${sourceDescription}) -- give one of them a different name.`
+    );
+  }
+  componentSchemas[name] = def;
+}
+
+/**
  * joi-to-json returns a schema's own converted shape directly UNLESS the
  * Joi schema (or anything nested inside it) carries a `.id(...)` -- then it
  * returns the converted shape (or, when the WHOLE schema is itself id'd,
  * just `{ $ref }`) plus a sibling `schemas` object holding each referenced
  * id's own full definition, keyed by id, meant for `components.schemas`.
  * This merges any such definitions into the shared, document-wide
- * `componentSchemas` accumulator threaded through the whole document build
- * (deduping an identical repeat -- the same `.id()`'d schema converted at
- * another call site -- and throwing on a genuine collision between two
- * differently-shaped schemas sharing an id, so a mistake fails loudly at
- * generation time instead of silently documenting the wrong thing), and
+ * `componentSchemas` accumulator (see mergeComponentSchema above) and
  * returns the schema with `schemas` stripped off, ready to use directly
  * wherever a schema value is needed.
  */
@@ -145,13 +167,12 @@ function convertJoiSchema(
   const { schemas: refs, ...rest } = toJsonSchema(schema, fallbackType);
 
   for (const [name, def] of Object.entries(refs ?? {})) {
-    const existing = componentSchemas[name] as SchemaObject | undefined;
-    if (existing && stableStringify(existing) !== stableStringify(def)) {
-      throw new Error(
-        `buildOpenApiDocument: two different Joi schemas both used .id('${name}') with different shapes -- give one of them a different id.`
-      );
-    }
-    componentSchemas[name] = def;
+    mergeComponentSchema(
+      componentSchemas,
+      name,
+      def,
+      `Joi schema .id('${name}')`
+    );
   }
 
   return rest;

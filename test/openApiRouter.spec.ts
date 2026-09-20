@@ -649,7 +649,7 @@ describe('UNIT: createOpenApiRouter', () => {
       });
 
       expect(() => buildOpenApiDocument({ title: 't', version: '1' })).to.throw(
-        /used \.id\('Collision'\)/
+        /'Collision'.*different shapes/
       );
     });
 
