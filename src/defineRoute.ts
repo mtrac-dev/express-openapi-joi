@@ -149,6 +149,13 @@ export interface RouteDef<
    * response type to deserialize into and just discards the body
    * (returns void) -- only needed for a route whose callers actually
    * read the response body.
+   *
+   * Leaving this out entirely means no success status is documented at
+   * all, not a fabricated one -- buildOpenApiDocument doesn't assume every
+   * undocumented route is a schema-less 200. Assuming that broke a real
+   * generated client the one time a route's actual success status wasn't
+   * 200: a fabricated, schema-less 200 sat next to that route's real,
+   * schema'd status, and the client generator picked the fabricated one.
    */
   responses?: Record<
     number,

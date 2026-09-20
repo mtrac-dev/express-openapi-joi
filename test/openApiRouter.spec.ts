@@ -695,7 +695,7 @@ describe('UNIT: createOpenApiRouter', () => {
       500: { description: 'common server error' },
     };
 
-    it('merges into a route with no responses of its own', () => {
+    it('merges into a route with no responses of its own, without fabricating a success status', () => {
       const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
       const router = express.Router();
       defineRoute(router, {
@@ -712,6 +712,14 @@ describe('UNIT: createOpenApiRouter', () => {
         commonResponses,
       });
       const responses = doc.paths['/common-responses-a'].get?.responses;
+
+      // No 200 -- a route that never says what it returns shouldn't have
+      // one invented for it (that's exactly the assumption that broke a
+      // real generated client the one time a route's real success status
+      // wasn't 200: a fabricated, schema-less 200 sat next to the real,
+      // schema'd status, and the client generator picked the fabricated
+      // one).
+      expect(responses?.['200']).to.be.undefined;
 
       expect(responses?.['404']).to.eql({ description: 'common not found' });
       expect(responses?.['500']).to.eql({

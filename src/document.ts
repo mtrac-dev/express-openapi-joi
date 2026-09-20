@@ -440,9 +440,10 @@ function mergeRequestBody(
  * createRouteRegistry(), which binds this to its own registry so a
  * caller doesn't have to pass one explicitly). Request schemas convert
  * from the same Joi schemas that actually validate the request, via
- * joi-to-json, so there's nothing to keep in sync by hand. Routes
- * without an explicit `responses` entry just get a generic 200 with no
- * body schema (client method returns void).
+ * joi-to-json, so there's nothing to keep in sync by hand. A route
+ * without an explicit `responses` entry documents no success status at
+ * all (client method returns void) -- never a fabricated 200, which would
+ * misdocument a route whose real success status isn't 200.
  *
  * A docPath+method can have more than one defineRoute registration --
  * e.g. a role-gated route that falls through to a different handler per
@@ -572,10 +573,7 @@ export function buildOpenApiDocument(
       ...(mergedRequestBody && { requestBody: mergedRequestBody }),
       responses: mergeResponses(
         existing?.responses,
-        responses({
-          ...commonResponses,
-          ...(route.responses ?? { 200: { description: 'OK' } }),
-        })
+        responses({ ...commonResponses, ...route.responses })
       ),
       // mergeSecurity's own SecurityRequirementObject (security.ts) types each
       // scheme's scope list as `string[] | undefined` (Partial<Record<...>>)
