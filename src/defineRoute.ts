@@ -45,6 +45,80 @@ type ResolvedParams<
 
 type InferJoi<S> = S extends Schema<infer T> ? T : never;
 
+// Sentinel for "no typed responses declared" -- checked as `keyof Responses
+// extends never`, not `Responses extends undefined`, for the same reason
+// ResolvedParams above checks ParamNames against an empty tuple instead of
+// undefined: `undefined extends T` is true for nearly any T under a loose
+// (consumer-side) tsconfig, which would make an undefined-based check
+// unreliable regardless of how strict this library's own build is.
+// eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- deliberate: an intentional sentinel, not an accidental `{}`
+type EmptyResponses = Record<never, never>;
+
+/**
+ * A response-map-narrowed facade over Express's real `res`. Express's own
+ * `Response<ResBody>.status(code)` returns the same `Response<ResBody>`
+ * regardless of `code` -- there's no built-in way to tie a specific status
+ * literal to its own body shape. Here, `.status(code)` instead returns an
+ * object whose `json`/`send` only accept that literal status's own response
+ * type, so e.g. `res.status(200).json(...)` and `res.status(401).json(...)`
+ * are checked against different shapes from the same `ResponseMap`. This
+ * only narrows when `code` is a number LITERAL at the call site (as it
+ * always is in practice -- `res.status(200)`, never a computed variable);
+ * a computed status code isn't assignable to `S extends keyof ResponseMap`
+ * and falls back to the same union every bare `res.json(...)` (with no
+ * `.status()` call at all) already accepts.
+ */
+type TypedRouteResponse<
+  ResponseMap extends Record<number, unknown>,
+  Locals extends object,
+> = Omit<
+  express.Response<ResponseMap[keyof ResponseMap], Locals>,
+  'status' | 'json' | 'send'
+> & {
+  json(body: ResponseMap[keyof ResponseMap]): express.Response;
+  send(body: ResponseMap[keyof ResponseMap]): express.Response;
+  status<S extends keyof ResponseMap & number>(
+    code: S
+  ): {
+    json(body: ResponseMap[S]): express.Response;
+    send(body: ResponseMap[S]): express.Response;
+  };
+};
+
+type RouteHandler<
+  Path extends string,
+  ParamNames extends readonly string[],
+  Body extends Schema | undefined,
+  Query extends Schema | undefined,
+  Locals extends object,
+  Responses extends Record<number, unknown>,
+> = keyof Responses extends never
+  ? express.RequestHandler<
+      ResolvedParams<Path, ParamNames>,
+      unknown,
+      InferJoi<Body>,
+      InferJoi<Query>,
+      Locals
+    >
+  : (
+      // A plain `void` return type here, not `void | Promise<void>` -- same
+      // as express.RequestHandler's own call signature. TS's "void-
+      // returning function type accepts an implementation returning
+      // anything" rule only fires against a literal `void` target;
+      // `Promise<void>` is compared structurally instead, which would
+      // reject an async handler here (it returns `res.json(...)`'s own
+      // Response, wrapped in the Promise the `async` keyword adds).
+      req: express.Request<
+        ResolvedParams<Path, ParamNames>,
+        unknown,
+        InferJoi<Body>,
+        InferJoi<Query>,
+        Locals
+      >,
+      res: TypedRouteResponse<Responses, Locals>,
+      next: express.NextFunction
+    ) => void;
+
 /**
  * Translates this route's own `:name`/`:name?`/`:name(regex)` segments into
  * OpenAPI's `{name}` placeholder syntax, for deriving `docPath` from
@@ -93,6 +167,7 @@ export interface RouteDef<
   Body extends Schema | undefined,
   Query extends Schema | undefined,
   ParamNames extends readonly string[] = [],
+  Responses extends Record<number, unknown> = EmptyResponses,
 > {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete';
   /** Path as passed to `router[method]` -- relative to wherever this router is mounted. */
@@ -156,6 +231,12 @@ export interface RouteDef<
    * generated client the one time a route's actual success status wasn't
    * 200: a fabricated, schema-less 200 sat next to that route's real,
    * schema'd status, and the client generator picked the fabricated one.
+   *
+   * Not yet tied to `Responses` below -- `schema` here is still hand-
+   * written JSON Schema, while `Responses` (via `defineRoute.withResponses`)
+   * only drives compile-time checking of `handler` itself today.
+   * `description` is always hand-written either way; it's not something a
+   * TS type carries.
    */
   responses?: Record<
     number,
@@ -198,13 +279,7 @@ export interface RouteDef<
    * `handler` unless you cast it there.
    */
   middleware?: Provider<Locals>[] | express.RequestHandler[];
-  handler: express.RequestHandler<
-    ResolvedParams<Path, ParamNames>,
-    unknown,
-    InferJoi<Body>,
-    InferJoi<Query>,
-    Locals
-  >;
+  handler: RouteHandler<Path, ParamNames, Body, Query, Locals, Responses>;
 }
 
 // docPath doesn't exist on RouteDef at all -- it's always derived from
@@ -217,7 +292,8 @@ export type AnyRouteDef = RouteDef<
   object,
   Schema | undefined,
   Schema | undefined,
-  readonly string[]
+  readonly string[],
+  Record<number, unknown>
 > & { docPath: string };
 
 /**
@@ -248,9 +324,10 @@ export function createRouteRegistry() {
     Body extends Schema | undefined = undefined,
     Query extends Schema | undefined = undefined,
     ParamNames extends readonly string[] = [],
+    Responses extends Record<number, unknown> = EmptyResponses,
   >(
     router: express.IRouter,
-    def: RouteDef<Path, Locals, Body, Query, ParamNames>
+    def: RouteDef<Path, Locals, Body, Query, ParamNames, Responses>
   ) {
     const docPath = `${def.prefix ?? ''}${pathToDocSegment(def.path)}`;
     if (docPath === '') {
@@ -327,6 +404,44 @@ export function createRouteRegistry() {
       def.handler
     );
   }
+
+  /**
+   * Opt-in compile-time response checking: pins `Responses` for one
+   * `defineRoute` call, e.g.
+   * `defineRoute.withResponses<{ 200: Found; 401: Unauthorized }>()(router, {...})`.
+   * Every route not using this keeps working exactly as it does without
+   * it -- `Responses` defaults to `EmptyResponses`, `handler` stays a
+   * plain `express.RequestHandler`, nothing about this changes existing
+   * behavior.
+   *
+   * Not a plain `defineRoute<Responses>(...)` call, because TypeScript
+   * stops inferring EVERY trailing type parameter the moment any explicit
+   * type argument is given -- confirmed directly: giving `Responses`
+   * explicitly as defineRoute's first parameter silently discarded real
+   * inference for Path/Body/Query too, falling back to their bare
+   * defaults instead (a required `query: Schema<...>` argument resolved
+   * to `undefined`, with no error at the call site -- only surfaced once
+   * something tried to use it). Currying works around this: this call has
+   * nothing else to infer, so `Responses` is safe to pass explicitly; the
+   * function it returns is a fresh generic call with zero explicit type
+   * arguments, where Path/Locals/Body/Query/ParamNames all go back to
+   * inferring normally from `def`, same as every other defineRoute call
+   * today.
+   */
+  defineRoute.withResponses =
+    <Responses extends Record<number, unknown>>() =>
+    <
+      Path extends string,
+      Locals extends object = Record<string, never>,
+      Body extends Schema | undefined = undefined,
+      Query extends Schema | undefined = undefined,
+      ParamNames extends readonly string[] = [],
+    >(
+      router: express.IRouter,
+      def: RouteDef<Path, Locals, Body, Query, ParamNames, Responses>
+    ) => {
+      defineRoute(router, def);
+    };
 
   return {
     defineRoute,

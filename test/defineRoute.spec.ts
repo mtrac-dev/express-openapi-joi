@@ -475,4 +475,41 @@ describe('UNIT: defineRoute', () => {
     expect(first.routeRegistry).to.have.lengthOf(1);
     expect(second.routeRegistry).to.have.lengthOf(0);
   });
+
+  it('registers a route via defineRoute.withResponses, narrowing res.json to each declared status', async () => {
+    const { defineRoute } = createRouteRegistry();
+    const router = express.Router();
+
+    defineRoute.withResponses<{
+      200: { id: string };
+      404: { message: string };
+    }>()(router, {
+      method: 'get',
+      path: '/:id',
+      prefix: '/widgets',
+      handler: (req, res) => {
+        if (req.params.id === 'missing') {
+          // Compile-time check: only { message: string } type-checks here,
+          // since this is the 404 branch of TypedRouteResponse's status().
+          res.status(404).json({ message: 'not found' });
+          return;
+        }
+        // Compile-time check: only { id: string } type-checks here, the
+        // 200 branch.
+        res.status(200).json({ id: req.params.id });
+      },
+    });
+
+    const app = express();
+    app.use('/widgets', router);
+    const request = testRequest(app);
+
+    const found = await request.get('/widgets/abc');
+    expect(found.statusCode).to.equal(200);
+    expect(found.body).to.eql({ id: 'abc' });
+
+    const missing = await request.get('/widgets/missing');
+    expect(missing.statusCode).to.equal(404);
+    expect(missing.body).to.eql({ message: 'not found' });
+  });
 });
