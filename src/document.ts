@@ -468,11 +468,27 @@ export function buildOpenApiDocument(
     version,
     servers,
     securitySchemes = {},
+    commonResponses,
   }: {
     title: string;
     version: string;
     servers?: string[];
     securitySchemes?: Record<string, SecuritySchemeObject>;
+    /**
+     * Responses to merge into EVERY operation's own `responses` -- e.g. the
+     * 400/404/500 an app-wide error handler can produce for literally any
+     * request, regardless of which defineRoute registration (if any)
+     * actually ran. OpenAPI still wants these documented per-operation (a
+     * caller reading one endpoint's spec has no way to know they also
+     * apply), and repeating the same entries on every single defineRoute
+     * call would just be copy-pasted boilerplate. A route's own `responses`
+     * entry wins on a status-code collision -- it's describing something
+     * more specific than the generic app-wide one.
+     */
+    commonResponses?: Record<
+      number,
+      { description: string; schema?: SchemaObject }
+    >;
   }
 ): OpenApiDocument {
   const paths: Record<string, Record<string, OperationObject>> = {};
@@ -556,7 +572,10 @@ export function buildOpenApiDocument(
       ...(mergedRequestBody && { requestBody: mergedRequestBody }),
       responses: mergeResponses(
         existing?.responses,
-        responses(route.responses ?? { 200: { description: 'OK' } })
+        responses({
+          ...commonResponses,
+          ...(route.responses ?? { 200: { description: 'OK' } }),
+        })
       ),
       // mergeSecurity's own SecurityRequirementObject (security.ts) types each
       // scheme's scope list as `string[] | undefined` (Partial<Record<...>>)

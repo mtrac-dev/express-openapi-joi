@@ -688,4 +688,64 @@ describe('UNIT: createOpenApiRouter', () => {
       ).not.to.throw();
     });
   });
+
+  describe('commonResponses', () => {
+    const commonResponses = {
+      404: { description: 'common not found' },
+      500: { description: 'common server error' },
+    };
+
+    it('merges into a route with no responses of its own', () => {
+      const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
+      const router = express.Router();
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        prefix: '/common-responses-a',
+        summary: 'a',
+        handler: (_req, res) => res.status(200).json({}),
+      });
+
+      const doc = buildOpenApiDocument({
+        title: 't',
+        version: '1',
+        commonResponses,
+      });
+      const responses = doc.paths['/common-responses-a'].get?.responses;
+
+      expect(responses?.['404']).to.eql({ description: 'common not found' });
+      expect(responses?.['500']).to.eql({
+        description: 'common server error',
+      });
+    });
+
+    it("lets the route's own response win on a status-code collision", () => {
+      const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
+      const router = express.Router();
+      defineRoute(router, {
+        method: 'get',
+        path: '/',
+        prefix: '/common-responses-b',
+        summary: 'b',
+        responses: {
+          404: { description: 'this specific thing was not found' },
+        },
+        handler: (_req, res) => res.status(200).json({}),
+      });
+
+      const doc = buildOpenApiDocument({
+        title: 't',
+        version: '1',
+        commonResponses,
+      });
+      const responses = doc.paths['/common-responses-b'].get?.responses;
+
+      expect(responses?.['404']).to.eql({
+        description: 'this specific thing was not found',
+      });
+      expect(responses?.['500']).to.eql({
+        description: 'common server error',
+      });
+    });
+  });
 });
