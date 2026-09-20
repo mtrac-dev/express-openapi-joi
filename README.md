@@ -23,7 +23,17 @@ to `handler`'s own function name (falling back to a derived
 method+docPath name, e.g. `getWidgetsId`, when the handler is anonymous or
 its inferred name is just the literal `"handler"` -- see
 `RouteDef.operationId`'s own JSDoc for the full fallback chain and its one
-documented gap).
+documented gap). `buildOpenApiDocument` also takes an optional
+`commonResponses` (merged into every operation, e.g. the 400/404/500 an
+app-wide error handler can produce regardless of which route ran).
+
+`defineRoute.withResponses<{ 200: Widget }>()(router, {...})` -- an
+alternative to plain `defineRoute` -- type-checks `handler`'s `res` against
+a per-status response map (`res.status(200).json(...)` only accepts a
+`Widget` there), and, paired with the separate `./typegen` subpath export,
+generates `responses[status].schema` from those same TypeScript types
+instead of hand-writing JSON Schema for them. See "Typed responses" and
+"Generating response schemas from TypeScript" below.
 
 See `src/index.ts` for the full public API.
 
@@ -132,6 +142,96 @@ import { createRouteRegistry } from '@mtrac/express-openapi-joi';
 const { defineRoute, routeRegistry, buildOpenApiDocument } =
   createRouteRegistry();
 ```
+
+### Typed responses
+
+Express's own `Response<ResBody>.status(code)` returns the same
+`Response<ResBody>` regardless of `code` -- there's no built-in way to tie
+a specific status literal to its own response shape. `defineRoute.withResponses<Responses>()`
+is an alternative to plain `defineRoute` that fixes that: it's curried
+(call it with the response map first, then call the function it returns
+exactly like `defineRoute`) because TypeScript stops inferring every
+other type parameter the instant any explicit type argument is given, and
+currying isolates `Responses` into a call with nothing else to infer.
+
+```ts
+import { defineRoute } from '@mtrac/express-openapi-joi';
+
+interface Widget {
+  id: string;
+  name: string;
+}
+interface NotFound {
+  message: string;
+}
+
+defineRoute.withResponses<{ 200: Widget; 404: NotFound }>()(widgetsRouter, {
+  method: 'get',
+  path: '/:id',
+  prefix: '/widgets',
+  summary: 'Get a widget',
+  responses: {
+    200: { description: 'The widget' },
+    404: { description: 'No widget with that id' },
+  },
+  handler: (req, res) => {
+    // res.status(200).json(...) only accepts a Widget here; res.status(404)
+    // only accepts a NotFound. A computed status code (no .status() call
+    // narrowing it to a literal) falls back to the full union, same as a
+    // plain defineRoute handler always has.
+    res.status(200).json({ id: req.params.id, name: 'thing' });
+  },
+});
+```
+
+This is purely a compile-time check on `handler` -- `responses[status].schema`
+still needs either a hand-written `schema` on the `responses` entry above, or
+the separate `./typegen` subpath below, to actually document the response
+body's shape.
+
+### Generating response schemas from TypeScript (`./typegen`)
+
+A separate subpath export -- not part of the main package entry point,
+since it pulls in `ts-json-schema-generator` and the TypeScript compiler
+API, real weight a consumer only using `defineRoute`/`buildOpenApiDocument`
+shouldn't have to carry. Generates `responses[status].schema` from a
+`withResponses<>` call's own response types, the same "the TypeScript type
+is the source of truth" idea `.id()` already gives request bodies via
+joi-to-json, as a post-process on an already-built document:
+
+```ts
+import { applyGeneratedResponseSchemas } from '@mtrac/express-openapi-joi/typegen';
+
+// After buildOpenApiDocument():
+applyGeneratedResponseSchemas(
+  document,
+  // Absolute paths to every file that might contain a
+  // defineRoute.withResponses<>() call -- this module doesn't scan a
+  // directory itself; walk your own routes directory and filter with the
+  // re-exported fileLooksLikeItUsesWithResponses if you want that
+  // convenience.
+  routeFiles,
+  // Absolute path to the tsconfig.json whose compilerOptions resolve
+  // those files' own types.
+  tsconfigPath
+);
+```
+
+Every `withResponses<{...}>` value must be a plain named type/interface
+reference (or an array of one) -- an inline union, an inline object
+literal, or a generic instantiation written directly throws instead of
+silently generating no schema (or the wrong one); give it its own
+concrete, non-generic named type alias instead. A type with a `toJSON`
+method (checked structurally, not by name) generates from that method's
+own return type instead of the type's own shape, since that's what
+`res.json()` actually sends over the wire.
+
+Runs identically under both ESM and CJS, same as every other export in
+this package -- reaching into `ts-json-schema-generator`'s own nested
+`typescript` install (needed so both this module and it agree on the same
+`ts.SyntaxKind` numbering) needs `require.resolve`'s `paths` option, which
+has no ESM-native equivalent; this is handled internally via
+`module.createRequire`, not something a caller needs to think about.
 
 ### Swapping into an app that already hand-rolls this (e.g. registry.ts/security.ts/openapiRouter.ts)
 
