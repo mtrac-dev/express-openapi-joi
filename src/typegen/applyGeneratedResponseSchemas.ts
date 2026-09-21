@@ -72,47 +72,47 @@ function extractResponsesMap(
   return statusToType;
 }
 
-/** Every top-level `const NAME = <expr>;` in the file -- the only shape defineRoute calls here build docPath from. */
+/** Every top-level `const NAME = <expr>;` in the file, as raw (unresolved) initializer nodes. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ts.SourceFile, not this project's own typescript's type
-function buildConstMap(sourceFile: any): Map<string, any> {
+function localConstNodes(sourceFile: any): Map<string, any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const constMap = new Map<string, any>();
+  const nodes = new Map<string, any>();
   for (const statement of sourceFile.statements) {
-    if (nestedTs.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (
-          nestedTs.isIdentifier(declaration.name) &&
-          declaration.initializer
-        ) {
-          constMap.set(declaration.name.text, declaration.initializer);
-        }
+    if (!nestedTs.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (nestedTs.isIdentifier(declaration.name) && declaration.initializer) {
+        nodes.set(declaration.name.text, declaration.initializer);
       }
     }
   }
-  return constMap;
+  return nodes;
 }
 
 /**
  * Statically evaluates the handful of expression shapes `method`/`path`/
  * `prefix` actually use across a typical defineRoute call: a plain string
- * literal, a local `const` reference to one (resolved via `constMap`), or
- * a template expression combining the two (e.g. `` `${cartPrefix}/migrate` ``).
+ * literal, a local `const` reference to one (resolved via `constMap`,
+ * already fully resolved to a string -- see buildConstMap), an `as
+ * const`-asserted literal (a common way a shared param-name constant gets
+ * declared, e.g. `export const CART_ID = 'cart_id' as const;` -- without
+ * unwrapping this, its initializer is an AsExpression wrapping the real
+ * string literal, not a StringLiteral node itself, so a `path` expression
+ * referencing it via buildConstMap's import resolution would otherwise
+ * silently fail to resolve), or a template expression combining any of the
+ * above (e.g. `` `${cartPrefix}/migrate` `` or `` `/:${CART_ID}` ``).
  * Anything else -- a function call, a computed member access, ... --
  * returns `undefined` rather than guessing.
  */
 function resolveStringExpression(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
   expr: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constMap: Map<string, any>
+  constMap: Map<string, string>
 ): string | undefined {
-  if (nestedTs.isStringLiteralLike(expr)) return expr.text;
-  if (nestedTs.isIdentifier(expr)) {
-    const initializer = constMap.get(expr.text);
-    return initializer
-      ? resolveStringExpression(initializer, constMap)
-      : undefined;
+  if (nestedTs.isAsExpression(expr)) {
+    return resolveStringExpression(expr.expression, constMap);
   }
+  if (nestedTs.isStringLiteralLike(expr)) return expr.text;
+  if (nestedTs.isIdentifier(expr)) return constMap.get(expr.text);
   if (nestedTs.isTemplateExpression(expr)) {
     let result = expr.head.text;
     for (const span of expr.templateSpans) {
@@ -125,12 +125,103 @@ function resolveStringExpression(
   return undefined;
 }
 
+/**
+ * Resolves one `import { A, B as C } from './relativeModule'` statement's
+ * named bindings into `constMap`, if `statement` even is that shape (a
+ * relative-module named import) at all -- split out of buildConstMap purely
+ * to keep that function's own cognitive complexity down. Import resolution
+ * is deliberately bounded to exactly ONE level (an imported name resolves
+ * against the target file's own local consts only, never against what THAT
+ * file imports in turn) -- not a general transitive walk, which risks a
+ * stack overflow on a real, several-files-removed import cycle for no
+ * benefit any real router file actually needs -- and resolved via a plain
+ * same-directory `.ts` guess (`path.resolve(dirname, specifier) + '.ts'`)
+ * rather than running TypeScript's own module resolution, which is all a
+ * typical relative import of a shared constants file needs.
+ */
+function resolveNamedImportConsts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+  statement: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  program: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sourceFile: any,
+  constMap: Map<string, string>
+): void {
+  if (!nestedTs.isImportDeclaration(statement)) return;
+  const { importClause, moduleSpecifier } = statement;
+  if (
+    !importClause?.namedBindings ||
+    !nestedTs.isNamedImports(importClause.namedBindings)
+  ) {
+    return;
+  }
+  if (
+    !nestedTs.isStringLiteralLike(moduleSpecifier) ||
+    !moduleSpecifier.text.startsWith('.')
+  ) {
+    return;
+  }
+
+  // A NodeNext/ESM project (this one included) writes relative imports
+  // with an explicit `.ts` extension already (`'./paths.ts'`); an import
+  // resolved via CommonJS/Node's older module resolution never does
+  // (`'./paths'`) -- appending unconditionally would double it into a
+  // nonexistent `./paths.ts.ts` for the former.
+  const resolvedSpecifier = path.resolve(
+    path.dirname(sourceFile.fileName),
+    moduleSpecifier.text
+  );
+  const resolvedPath = resolvedSpecifier.endsWith('.ts')
+    ? resolvedSpecifier
+    : `${resolvedSpecifier}.ts`;
+  const importedSourceFile = program.getSourceFile(resolvedPath);
+  if (!importedSourceFile) return;
+  const importedLocals = localConstNodes(importedSourceFile);
+
+  for (const element of importClause.namedBindings.elements) {
+    const importedName = element.propertyName?.text ?? element.name.text;
+    const initializer = importedLocals.get(importedName);
+    const value =
+      initializer && resolveStringExpression(initializer, new Map());
+    if (value !== undefined) constMap.set(element.name.text, value);
+  }
+}
+
+/**
+ * Every top-level `const NAME = <expr>;` in the file, PLUS every named
+ * import of one from a relative module (e.g. a shared param-name constant
+ * imported from a sibling `paths.ts`-style file, via
+ * resolveNamedImportConsts) -- both fully resolved to their own string
+ * value up front (not left as unresolved AST nodes), so a template
+ * expression combining the two (e.g. `` `/:${CART_ID}` ``) resolves
+ * regardless of which kind of identifier it references. Needed because a
+ * defineRoute call's own `path` (not just `prefix`) drives docPath
+ * resolution here (see resolveDocPathAndMethod) -- `path` strings often
+ * reference a shared param-name constant imported from elsewhere rather
+ * than declared locally in the router file itself.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ts.Program/ts.SourceFile, not this project's own typescript's type
+function buildConstMap(program: any, sourceFile: any): Map<string, string> {
+  const constMap = new Map<string, string>();
+
+  for (const statement of sourceFile.statements) {
+    resolveNamedImportConsts(statement, program, sourceFile, constMap);
+  }
+
+  for (const [name, initializer] of localConstNodes(sourceFile)) {
+    const value = resolveStringExpression(initializer, constMap);
+    if (value !== undefined) constMap.set(name, value);
+  }
+
+  return constMap;
+}
+
 function getObjectLiteralStringProp(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ObjectLiteralExpression, not this project's own typescript's type
   obj: any,
   propName: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constMap: Map<string, any>
+  constMap: Map<string, string>
 ): string | undefined {
   const prop = obj.properties.find(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
@@ -150,8 +241,7 @@ function getObjectLiteralStringProp(
 function resolveDocPathAndMethod(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ObjectLiteralExpression, not this project's own typescript's type
   defArg: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constMap: Map<string, any>
+  constMap: Map<string, string>
 ): { docPath?: string; method?: string } {
   const method = getObjectLiteralStringProp(defArg, 'method', constMap);
   const prefix = getObjectLiteralStringProp(defArg, 'prefix', constMap);
@@ -224,8 +314,7 @@ function processWithResponsesCall(
   call: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   program: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constMap: Map<string, any>,
+  constMap: Map<string, string>,
   document: OpenApiDocument,
   componentSchemas: Record<string, SchemaObject>,
   relativeFile: string
@@ -346,7 +435,7 @@ export function applyGeneratedResponseSchemas(
       );
     }
 
-    const constMap = buildConstMap(sourceFile);
+    const constMap = buildConstMap(program, sourceFile);
     const relativeFile = path.relative(process.cwd(), file);
 
     for (const call of findWithResponsesCalls(sourceFile)) {

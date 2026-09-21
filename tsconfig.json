@@ -8,5 +8,11 @@
     "noEmit": true
   },
   "include": ["src/**/*", "test/**/*"],
-  "exclude": ["dist"]
+  // cjsStyle's own router.ts/paths.ts deliberately use an extensionless
+  // relative import (see test/typegenFixtures/cjsStyle/router.ts) --
+  // NodeNext (this project's own module setting) forbids that outright,
+  // so this pair type-checks against its own sibling tsconfig.json
+  // (classic Node resolution) instead, passed explicitly wherever
+  // applyGeneratedResponseSchemas is given this fixture in tests.
+  "exclude": ["dist", "test/typegenFixtures/cjsStyle"]
 }

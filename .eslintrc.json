@@ -15,7 +15,7 @@
     "plugin:sonarjs/recommended-legacy",
     "plugin:prettier/recommended"
   ],
-  "ignorePatterns": ["dist"],
+  "ignorePatterns": ["dist", "test/typegenFixtures/cjsStyle"],
   "plugins": ["import-x", "prettier", "sonarjs"],
   "rules": {
     "prettier/prettier": "error",

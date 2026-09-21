@@ -13,6 +13,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TSCONFIG_PATH = path.join(__dirname, '..', 'tsconfig.json');
 const FIXTURES_DIR = path.join(__dirname, 'typegenFixtures');
+const CJS_STYLE_DIR = path.join(FIXTURES_DIR, 'cjsStyle');
+const CJS_STYLE_TSCONFIG_PATH = path.join(CJS_STYLE_DIR, 'tsconfig.json');
 
 function fixture(name: string): string {
   return path.join(FIXTURES_DIR, name);
@@ -87,6 +89,72 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
       properties: { code: { type: 'string' }, msg: { type: 'string' } },
       required: ['code', 'msg'],
       additionalProperties: false,
+    });
+  });
+
+  it('resolves a path built from a relatively-imported, `as const`-declared constant', () => {
+    const { buildOpenApiDocument } = createRouteRegistry();
+    const doc = buildOpenApiDocument({ title: 't', version: '1' });
+    doc.paths['/gadgets/{gadget_id}'] = {
+      get: {
+        summary: 'Get a gadget',
+        responses: { 200: { description: 'The gadget' } },
+      },
+    };
+    const consoleError = sinon.stub(console, 'error');
+
+    try {
+      applyGeneratedResponseSchemas(
+        doc,
+        [fixture('importedPathRouter.ts')],
+        TSCONFIG_PATH
+      );
+      sinon.assert.notCalled(consoleError);
+    } finally {
+      consoleError.restore();
+    }
+
+    const gadgetSchema =
+      doc.paths['/gadgets/{gadget_id}'].get?.responses?.['200'].content[
+        'application/json'
+      ].schema;
+    expect(gadgetSchema).to.eql({ $ref: '#/components/schemas/Gadget' });
+    expect(doc.components.schemas?.Gadget).to.eql({
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    });
+  });
+
+  it("resolves a path built from an extensionless relative import (a classic-resolution consumer's own convention)", () => {
+    const { buildOpenApiDocument } = createRouteRegistry();
+    const doc = buildOpenApiDocument({ title: 't', version: '1' });
+    doc.paths['/doohickeys/{widget_id}'] = {
+      get: {
+        summary: 'Get a doohickey',
+        responses: { 200: { description: 'The doohickey' } },
+      },
+    };
+    const consoleError = sinon.stub(console, 'error');
+
+    try {
+      applyGeneratedResponseSchemas(
+        doc,
+        [path.join(CJS_STYLE_DIR, 'router.ts')],
+        CJS_STYLE_TSCONFIG_PATH
+      );
+      sinon.assert.notCalled(consoleError);
+    } finally {
+      consoleError.restore();
+    }
+
+    const doohickeySchema =
+      doc.paths['/doohickeys/{widget_id}'].get?.responses?.['200'].content[
+        'application/json'
+      ].schema;
+    expect(doohickeySchema).to.eql({
+      $ref: '#/components/schemas/Doohickey',
     });
   });
 
