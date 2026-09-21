@@ -13,6 +13,7 @@ export {
 } from './defineRoute.ts';
 export { defineRoute, routeRegistry } from './globalRegistry.ts';
 export { type Provider, type ProviderLocals } from './provider.ts';
+export { validationErrorHandler } from './validators.ts';
 export {
   securedBy,
   inferSecurity,

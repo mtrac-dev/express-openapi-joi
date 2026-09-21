@@ -7,6 +7,7 @@ import {
   headerValidator,
   paramValidator,
   queryValidator,
+  validationErrorHandler,
 } from '../src/validators.ts';
 import { testRequest } from './helpers/request.ts';
 
@@ -20,6 +21,7 @@ describe('UNIT: validators', () => {
     app.post('/', bodyValidator(schema), (req, res) =>
       res.status(200).json(req.body)
     );
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     it('replaces req.body with the validated value on success', async () => {
@@ -29,10 +31,12 @@ describe('UNIT: validators', () => {
       expect(res.body).to.eql({ name: 'thing' });
     });
 
-    it('responds 400 on a schema violation', async () => {
+    it('forwards a ValidationError to next(), formatted 400 by validationErrorHandler', async () => {
       const res = await request.post('/').send({});
 
       expect(res.status).to.equal(400);
+      expect(res.body).to.have.property('message');
+      expect(res.body).to.have.property('details');
     });
   });
 
@@ -42,6 +46,7 @@ describe('UNIT: validators', () => {
     app.get('/', queryValidator(schema), (req, res) =>
       res.status(200).json(req.query)
     );
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     it('replaces req.query with the validated value on success', async () => {
@@ -51,7 +56,7 @@ describe('UNIT: validators', () => {
       expect(res.body).to.eql({ q: 'thing' });
     });
 
-    it('responds 400 on a schema violation', async () => {
+    it('responds 400 via validationErrorHandler on a schema violation', async () => {
       const res = await request.get('/');
 
       expect(res.status).to.equal(400);
@@ -66,6 +71,7 @@ describe('UNIT: validators', () => {
     app.get('/:id', paramValidator(schema), (req, res) =>
       res.status(200).json(req.params)
     );
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     it('passes through on a valid param', async () => {
@@ -74,7 +80,7 @@ describe('UNIT: validators', () => {
       expect(res.status).to.equal(200);
     });
 
-    it('responds 400 on a schema violation', async () => {
+    it('responds 400 via validationErrorHandler on a schema violation', async () => {
       const res = await request.get('/not-a-uuid');
 
       expect(res.status).to.equal(400);
@@ -89,6 +95,7 @@ describe('UNIT: validators', () => {
     app.get('/', headerValidator(schema), (_req, res) =>
       res.status(200).json({})
     );
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     it('passes through when the required header is present', async () => {
@@ -97,10 +104,64 @@ describe('UNIT: validators', () => {
       expect(res.status).to.equal(200);
     });
 
-    it('responds 400 when the required header is missing', async () => {
+    it('responds 400 via validationErrorHandler when the required header is missing', async () => {
       const res = await request.get('/');
 
       expect(res.status).to.equal(400);
+    });
+  });
+
+  describe('a consumer-supplied error handler', () => {
+    it("can check `instanceof ValidationError` (re-exported from 'joi') for its own response shape", async () => {
+      const schema = Joi.object<{ name: string }>({
+        name: Joi.string().required(),
+      });
+      const app = express();
+      app.use(express.json());
+      app.post('/', bodyValidator(schema), (req, res) =>
+        res.status(200).json(req.body)
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const customHandler: express.ErrorRequestHandler = (
+        err,
+        _req,
+        res,
+        next
+      ) => {
+        if (!(err instanceof Joi.ValidationError)) {
+          next(err);
+          return;
+        }
+        res.status(422).json({ code: 'BAD_INPUT', msg: err.message });
+      };
+      app.use(customHandler);
+      const request = testRequest(app);
+
+      const res = await request.post('/').send({});
+
+      expect(res.status).to.equal(422);
+      expect(res.body).to.include({ code: 'BAD_INPUT' });
+    });
+  });
+
+  describe('validationErrorHandler', () => {
+    it('forwards a non-ValidationError to the next error handler unchanged', async () => {
+      const app = express();
+      app.get('/', (_req, _res, next) => {
+        next(new Error('boom'));
+      });
+      app.use(validationErrorHandler);
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const fallback: express.ErrorRequestHandler = (err, _req, res, _next) => {
+        res.status(500).json({ caught: (err as Error).message });
+      };
+      app.use(fallback);
+      const request = testRequest(app);
+
+      const res = await request.get('/');
+
+      expect(res.status).to.equal(500);
+      expect(res.body).to.eql({ caught: 'boom' });
     });
   });
 });

@@ -1,5 +1,13 @@
-import type { Schema, ValidationError, ValidationOptions } from 'joi';
+// Joi ships as CJS with no static named exports Node's ESM loader can see
+// -- `import { ValidationError } from 'joi'` throws at runtime under ESM
+// even though it typechecks, since the .d.ts's named export doesn't
+// reflect what the real module namespace object exposes. Destructuring
+// off the default import works identically under both ESM and CJS.
+import Joi from 'joi';
+import type { Schema, ValidationOptions } from 'joi';
 import type express from 'express';
+
+const { ValidationError } = Joi;
 
 const BODY_QUERY_OPTIONS: ValidationOptions = {
   abortEarly: false,
@@ -11,17 +19,15 @@ const PARAM_HEADER_OPTIONS: ValidationOptions = {
   stripUnknown: false,
 };
 
-function validationErrorResponse(
-  res: express.Response,
-  error: ValidationError
-) {
-  res.status(400).json({ message: error.message, details: error.details });
-}
-
 /**
  * Validates req.body against the given Joi schema, replacing it with the
- * validated (and possibly coerced/defaulted) value on success. Ends the
- * request with 400 on failure.
+ * validated (and possibly coerced/defaulted) value on success. Forwards
+ * Joi's own ValidationError to `next` on failure, rather than responding
+ * itself -- how that's turned into an HTTP response (status, body shape,
+ * logging) is an app-wide concern, not something a per-field validator
+ * should own. See `validationErrorHandler` for a ready-made one, or write
+ * your own Express error-handling middleware that checks `err instanceof
+ * ValidationError` (re-exported from 'joi').
  *
  * Checks `result.error` before ever reading `result.value` (rather than
  * destructuring both up front) -- Joi's own ValidationResult<T> types the
@@ -35,7 +41,7 @@ export function bodyValidator<T>(
   return (req, res, next) => {
     const result = schema.validate(req.body, options);
     if (result.error) {
-      validationErrorResponse(res, result.error);
+      next(result.error);
       return;
     }
     req.body = result.value;
@@ -57,7 +63,7 @@ export function queryValidator<T>(
   return (req, res, next) => {
     const result = schema.validate(req.query, options);
     if (result.error) {
-      validationErrorResponse(res, result.error);
+      next(result.error);
       return;
     }
     Object.defineProperty(req, 'query', {
@@ -81,7 +87,7 @@ export function paramValidator<T>(
   return (req, res, next) => {
     const { error } = schema.validate(req.params, options);
     if (error) {
-      validationErrorResponse(res, error);
+      next(error);
       return;
     }
     next();
@@ -96,9 +102,33 @@ export function headerValidator<T>(
   return (req, res, next) => {
     const { error } = schema.validate(req.headers, options);
     if (error) {
-      validationErrorResponse(res, error);
+      next(error);
       return;
     }
     next();
   };
 }
+
+/**
+ * A ready-made terminal error handler for apps with no validation-error
+ * formatting of their own: responds 400 with `{ message, details }` for
+ * any Joi ValidationError forwarded by the validators above, and forwards
+ * anything else to whatever error-handling middleware comes after it (or
+ * Express's own default one, if none does). Mount it after your routes --
+ * `app.use(validationErrorHandler)` -- or skip it entirely and write your
+ * own that checks `err instanceof ValidationError` for a custom shape
+ * (e.g. one matching an app-wide error envelope already used for every
+ * other kind of error).
+ */
+export const validationErrorHandler: express.ErrorRequestHandler = (
+  err,
+  _req,
+  res,
+  next
+) => {
+  if (!(err instanceof ValidationError)) {
+    next(err);
+    return;
+  }
+  res.status(400).json({ message: err.message, details: err.details });
+};

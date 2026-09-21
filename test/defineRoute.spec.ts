@@ -4,6 +4,7 @@ import { expect } from 'chai';
 
 import { createRouteRegistry } from '../src/defineRoute.ts';
 import type { Provider } from '../src/provider.ts';
+import { validationErrorHandler } from '../src/validators.ts';
 import { testRequest } from './helpers/request.ts';
 
 describe('UNIT: defineRoute', () => {
@@ -70,6 +71,7 @@ describe('UNIT: defineRoute', () => {
     const app = express();
     app.use(express.json());
     app.use('/widgets', router);
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     const valid = await request.post('/widgets').send({ name: 'thing' });
@@ -99,6 +101,7 @@ describe('UNIT: defineRoute', () => {
     const app = express();
     app.use(express.json());
     app.use('/widgets', router);
+    app.use(validationErrorHandler);
 
     const res = await testRequest(app).post('/widgets').send({});
 
@@ -277,6 +280,7 @@ describe('UNIT: defineRoute', () => {
 
     const app = express();
     app.use('/widgets', router);
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     expect((await request.get('/widgets?q=thing')).statusCode).to.equal(200);
@@ -300,6 +304,7 @@ describe('UNIT: defineRoute', () => {
 
     const app = express();
     app.use('/widgets', router);
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     expect(
@@ -321,6 +326,7 @@ describe('UNIT: defineRoute', () => {
 
     const app = express();
     app.use('/widgets', router);
+    app.use(validationErrorHandler);
     const request = testRequest(app);
 
     expect(

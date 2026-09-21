@@ -43,6 +43,12 @@ build both a public and a full document from the same registry by
 filtering `routeRegistry` before calling `buildOpenApiDocument` -- see
 "Public/internal document split" below.
 
+A request failing Joi validation is forwarded to Express's error-handling
+chain (`next(error)`, the raw Joi `ValidationError`) rather than responded
+to directly -- an app decides how that becomes an HTTP response, via the
+provided `validationErrorHandler` or its own existing error-handling
+middleware. See "Validation error handling" below.
+
 See `src/index.ts` for the full public API.
 
 ## Installation
@@ -68,6 +74,7 @@ import {
   defineRoute,
   routeRegistry,
   createOpenApiRouter,
+  validationErrorHandler,
 } from '@mtrac/express-openapi-joi';
 
 const widgetsRouter = express.Router();
@@ -100,6 +107,39 @@ app.use(
     middleware: [myApiKeyAuthMiddleware],
   })
 );
+// See "Validation error handling" below -- without this (or your own
+// equivalent), a validation failure falls through to Express's own
+// default error handler instead of responding 400.
+app.use(validationErrorHandler);
+```
+
+### Validation error handling
+
+A request that fails Joi validation is forwarded to Express's error-handling
+chain via `next(error)` -- the raw Joi `ValidationError`, not this library's
+own type -- rather than being responded to directly. How that becomes an
+HTTP response (status, body shape, logging) is an app-wide concern, not
+something a per-field validator should decide unilaterally; every route
+using `request: {...}` shares whatever's mounted after it.
+
+`validationErrorHandler` is a ready-made terminal handler for an app with no
+error-formatting conventions of its own: mount it after your routes and a
+validation failure responds 400 with `{ message, details }`, same as this
+library's very first version did unconditionally.
+
+An app with its own error envelope (e.g. an existing `app.use(errorHandler)`
+that already formats every other kind of thrown error) doesn't need
+`validationErrorHandler` at all -- add one branch to that existing handler
+instead:
+
+```ts
+import { ValidationError } from 'joi';
+
+// Inside your app's existing error-handling middleware:
+if (cause instanceof ValidationError) {
+  res.status(400).json(toYourAppsErrorShape(cause));
+  return;
+}
 ```
 
 ### Security schemes
@@ -329,9 +369,10 @@ implementation, the usual shape after adopting this package is:
 SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
 
 Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
-imported) just needs its import path repointed at this package. Three
-things changed since the last time this section was updated -- one of
-them (`docPath`) DOES need call-site edits, the other two don't:
+imported) just needs its import path repointed at this package. Four
+things changed since the last time this section was updated -- two of
+them (`docPath`, validation error handling) DO need edits elsewhere in the
+app, the other two don't:
 
 - **`docPath` is gone.** `RouteDef` no longer has a `docPath` field at
   all -- `prefix` is now the only way to give a route's OpenAPI path
@@ -379,6 +420,19 @@ them (`docPath`) DOES need call-site edits, the other two don't:
   method+docPath (e.g. `getWidgetsId`), so operationId collisions across
   genuinely different routes should be rarer than they were, without
   anything needing to change in the router files themselves.
+- **Validation failures no longer respond for you.** The library's
+  validators used to call `res.status(400).json(...)` directly; they now
+  forward Joi's own `ValidationError` via `next(error)` instead, so an
+  app's own error-handling middleware decides the response shape (see
+  "Validation error handling" above). An app with an existing app-wide
+  error handler (e.g. one already formatting every other thrown error into
+  a `{ code, msg }`-style envelope) adds one branch:
+  `if (cause instanceof ValidationError) { res.status(400).json(toYourShape(cause)); return; }`
+  -- an app with no such handler yet can just mount the provided
+  `validationErrorHandler` for the old `{ message, details }` shape. Either
+  way, this needs a real addition somewhere in the app; without one, a
+  validation failure falls through to Express's own default error handler
+  (a bare 500, not a 400) instead of silently keeping the old behavior.
 
 ## Development
 
