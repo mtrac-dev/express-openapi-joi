@@ -9,8 +9,12 @@ Joi schemas in one call against the library's default registry, and
 `buildOpenApiDocument`/`createOpenApiRouter` build and serve the resulting
 OpenAPI 3.1 document (paths, path/query/header parameters, request bodies,
 responses, and security schemes, merged correctly across routes that share a
-docPath+method). `createRouteRegistry()` is also available directly, for an
-isolated registry instead of the default shared one.
+docPath+method). `createRouteRegistry<TScheme>()` is also available
+directly, for an isolated registry instead of the default shared one --
+`TScheme` optionally narrows every `security` field checked through it from
+the library's default, permissive `SecurityScheme` (`string`) down to a
+caller's own closed set of real scheme names. See "Isolated registries"
+below.
 
 The document's types come from `openapi3-ts/oas31` (a real, maintained
 OpenAPI 3.1 type package), not hand-rolled interfaces. A Joi schema marked
@@ -177,6 +181,15 @@ app.use(
 );
 ```
 
+`security`'s own type -- both stated directly and inferred via `securedBy` -- is plain
+`string` by default, since this library has no way to know your scheme names. A typo'd
+scheme name (`security: ['ApiKeyAuht']`) compiles clean and produces a `security`
+requirement that references a name absent from `components.securitySchemes` --
+invalid per the OpenAPI spec itself, but only ever discovered downstream (client
+generation, spec validation), nowhere near where the typo was actually written. If you
+have a small, fixed, real set of scheme names, `createRouteRegistry<TScheme>()` closes
+that gap -- see "Isolated registries" below.
+
 ### Isolated registries
 
 Reach for `createRouteRegistry()` instead of the default `defineRoute`/
@@ -190,6 +203,30 @@ import { createRouteRegistry } from '@mtrac/express-openapi-joi';
 const { defineRoute, routeRegistry, buildOpenApiDocument } =
   createRouteRegistry();
 ```
+
+Also reach for it -- even with only one registry -- to narrow `RouteDef.security`'s
+type from the library's default, permissive `SecurityScheme` (`string`) down to your
+own closed set of real scheme names:
+
+```ts
+const { defineRoute, routeRegistry } = createRouteRegistry<
+  'ApiKeyAuth' | 'BearerAuth'
+>();
+
+defineRoute(widgetsRouter, {
+  method: 'get',
+  path: '/',
+  prefix: '/widgets',
+  security: ['ApiKeyAuth'], // a typo here is now a compile error
+  handler: (_req, res) => res.status(200).json([]),
+});
+```
+
+Given once, at registry creation -- there's nothing in an individual `defineRoute` call
+for `TScheme` to be inferred from, and every registration made through the returned
+`defineRoute`/`defineRoute.withResponses` picks it up automatically. Only narrows
+`security`'s own type; `securedBy`'s own `scheme` parameter stays `SecurityScheme`
+regardless.
 
 ### Public/internal document split
 

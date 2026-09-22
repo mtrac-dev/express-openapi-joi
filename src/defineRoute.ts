@@ -9,7 +9,11 @@ import {
 } from './validators.ts';
 import { buildOpenApiDocument } from './document.ts';
 import type { Provider } from './provider.ts';
-import { inferSecurity, type SecurityRequirement } from './security.ts';
+import {
+  inferSecurity,
+  type SecurityRequirement,
+  type SecurityScheme,
+} from './security.ts';
 
 /**
  * Extracts `:name` segments from an Express path STRING literal type into a
@@ -168,6 +172,7 @@ export interface RouteDef<
   Query extends Schema | undefined,
   ParamNames extends readonly string[] = [],
   Responses extends Record<number, unknown> = EmptyResponses,
+  TScheme extends string = SecurityScheme,
 > {
   method: 'get' | 'post' | 'put' | 'patch' | 'delete';
   /** Path as passed to `router[method]` -- relative to wherever this router is mounted. */
@@ -269,7 +274,7 @@ export interface RouteDef<
    * unstated is how "this axis isn't documented" gets represented,
    * distinct from "verified open".
    */
-  security?: SecurityRequirement[];
+  security?: SecurityRequirement<TScheme>[];
   /**
    * Marks this registration as internal-only -- excluded from a "public"
    * document while still included in a "full" one, for a caller that wants
@@ -326,8 +331,31 @@ export type AnyRouteDef = RouteDef<
  * isolated instead of sharing some other part of the same process's
  * instance. buildOpenApiDocument is bound to the same registry, so a
  * caller never has to pass it explicitly.
+ *
+ * `TScheme` narrows every `defineRoute` call made through the returned
+ * function's own `security` field from the library's default, permissive
+ * `SecurityScheme` (`string`) down to a consumer's own closed set of real
+ * scheme names -- e.g. `createRouteRegistry<'ApiKeyAuth' |
+ * 'BearerAuth'>()` -- so a typo'd scheme name is a compile error
+ * instead of a silently-invalid OpenAPI document (a `security` entry
+ * referencing a name absent from `components.securitySchemes`, only ever
+ * discovered downstream -- generated-client time, spec-validation time --
+ * far from where the typo was actually written). Given once, at registry
+ * creation, rather than per `defineRoute` call: there's nothing in an
+ * individual call for TScheme to be inferred from, and repeating it at
+ * every call site would undo the point of narrowing it at all. Defaults
+ * to `SecurityScheme` so every existing caller -- including the default,
+ * ungenericized `defineRoute`/`routeRegistry` this module also exports --
+ * keeps exactly today's behavior unless it opts in.
+ *
+ * Only narrows `security`'s own type; `securedBy`'s `scheme` parameter
+ * (./security.ts) stays `SecurityScheme` regardless -- tagging middleware
+ * is comparatively rare next to writing `security: [...]` on a route, and
+ * narrowing it too would mean returning a `TScheme`-bound `securedBy`
+ * alongside `defineRoute`/`routeRegistry` here, a bigger addition to this
+ * function's own surface than the gap actually calls for today.
  */
-export function createRouteRegistry() {
+export function createRouteRegistry<TScheme extends string = SecurityScheme>() {
   const routeRegistry: AnyRouteDef[] = [];
 
   /**
@@ -350,7 +378,7 @@ export function createRouteRegistry() {
     Responses extends Record<number, unknown> = EmptyResponses,
   >(
     router: express.IRouter,
-    def: RouteDef<Path, Locals, Body, Query, ParamNames, Responses>
+    def: RouteDef<Path, Locals, Body, Query, ParamNames, Responses, TScheme>
   ) {
     const docPath = `${def.prefix ?? ''}${pathToDocSegment(def.path)}`;
     if (docPath === '') {
@@ -461,7 +489,7 @@ export function createRouteRegistry() {
       ParamNames extends readonly string[] = [],
     >(
       router: express.IRouter,
-      def: RouteDef<Path, Locals, Body, Query, ParamNames, Responses>
+      def: RouteDef<Path, Locals, Body, Query, ParamNames, Responses, TScheme>
     ) => {
       defineRoute(router, def);
     };

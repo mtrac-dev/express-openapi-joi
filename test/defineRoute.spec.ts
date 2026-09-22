@@ -482,6 +482,42 @@ describe('UNIT: defineRoute', () => {
     expect(second.routeRegistry).to.have.lengthOf(0);
   });
 
+  it('narrows RouteDef.security to a caller-given closed union, via createRouteRegistry<TScheme>()', () => {
+    const { defineRoute, routeRegistry } = createRouteRegistry<
+      'ApiKeyAuth' | 'BearerAuth'
+    >();
+    const router = express.Router();
+
+    defineRoute(router, {
+      method: 'get',
+      path: '/',
+      prefix: '/widgets',
+      // Compile-time check: 'ApiKeyAuth' type-checks here because it's a
+      // member of this registry's own TScheme union -- a typo'd scheme
+      // name (e.g. 'ApiKeyAuht') would be a compile error, not silently
+      // accepted the way it is through the library's default,
+      // ungenericized createRouteRegistry() (every other test in this
+      // file uses that default, permissive form).
+      security: ['ApiKeyAuth'],
+      handler: (_req, res) => res.status(200).json([]),
+    });
+
+    expect(routeRegistry.at(-1)?.security).to.eql(['ApiKeyAuth']);
+
+    // The same narrowing applies through the curried withResponses<>()
+    // entry point -- TScheme is closed over from this same registry, not
+    // re-specified at the withResponses<>() call.
+    defineRoute.withResponses<{ 200: { id: string } }>()(router, {
+      method: 'get',
+      path: '/:id',
+      prefix: '/widgets',
+      security: ['BearerAuth'],
+      handler: (req, res) => res.status(200).json({ id: req.params.id }),
+    });
+
+    expect(routeRegistry.at(-1)?.security).to.eql(['BearerAuth']);
+  });
+
   it('registers a route via defineRoute.withResponses, narrowing res.json to each declared status', async () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();

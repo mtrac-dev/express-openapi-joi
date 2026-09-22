@@ -13,17 +13,28 @@ export type SecurityScheme = string;
 /**
  * `'public'` means "no security requirement" -- one alternative among
  * others, same as an empty `{}` entry in a real OpenAPI `security` array.
- * `(SecurityScheme & {})` rather than bare `SecurityScheme` keeps
- * `'public'` visible as its own literal in the union -- plain
- * `SecurityScheme | 'public'` collapses to just `string`, since
- * `SecurityScheme` (itself `string`) already absorbs the `'public'`
- * literal.
+ * `(TScheme & {})` rather than bare `TScheme` keeps `'public'` visible as
+ * its own literal in the union -- plain `TScheme | 'public'` collapses to
+ * just `string` whenever `TScheme` itself is (or widens to) `string`,
+ * since it already absorbs the `'public'` literal.
+ *
+ * Generic over `TScheme`, defaulting to the same permissive
+ * `SecurityScheme` (`string`) this library has always used, so every
+ * existing reference to the bare `SecurityRequirement`/
+ * `SecurityRequirementObject` names -- including `mergeSecurity` below,
+ * and every RouteDef not explicitly parameterized -- keeps meaning
+ * exactly what it always has. A consumer with a small, fixed, real set of
+ * scheme names can get real narrowing (a typo'd scheme name is a compile
+ * error, not a silently-invalid OpenAPI document referencing a
+ * `securitySchemes` entry that doesn't exist) by giving
+ * `createRouteRegistry` its own closed union instead -- see
+ * `createRouteRegistry`'s own doc comment in ./defineRoute.ts.
  */
-export type SecurityRequirement = 'public' | (SecurityScheme & {});
+export type SecurityRequirement<TScheme extends string = SecurityScheme> =
+  'public' | (TScheme & {});
 
-export type SecurityRequirementObject = Partial<
-  Record<SecurityScheme, string[]>
->;
+export type SecurityRequirementObject<TScheme extends string = SecurityScheme> =
+  Partial<Record<TScheme, string[]>>;
 
 const SECURES_WITH = Symbol('securesWith');
 
