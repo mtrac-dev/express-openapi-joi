@@ -407,20 +407,22 @@ SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
 
 Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
 imported) just needs its import path repointed at this package. Four
-things changed since the last time this section was updated -- two of
-them (`docPath`, validation error handling) DO need edits elsewhere in the
-app, the other two don't:
+behavioral differences from a typical hand-rolled implementation are
+worth knowing up front -- two of them (`docPath`, validation error
+handling) DO need edits elsewhere in the app, the other two don't:
 
 - **`docPath` is gone.** `RouteDef` no longer has a `docPath` field at
   all -- `prefix` is now the only way to give a route's OpenAPI path
   context, and it's always combined with `path` (`prefix + path`,
   translating this route's own `:name`/`:name?`/`:name(regex)` segments
-  to `{name}`) to produce the document path. Concretely, in every real
-  router file in the original app today, `docPath` is hand-computed as exactly
+  to `{name}`) to produce the document path. Concretely, a hand-rolled
+  implementation's `docPath` is typically computed as exactly
   `prefix + translated-path` via a string constant declared once per
-  file (e.g. `cartRouter.ts`'s `const cartDocPath = '/carts/{cart_id}'`,
-  reused as `docPath: `${cartDocPath}/migrate`` alongside
-  `path: '/:cart_id/migrate'`) -- so the conversion is mechanical:
+  file -- the original app's router files did exactly this before its
+  migration (e.g. `cartRouter.ts`'s `const cartDocPath =
+'/carts/{cart_id}'`, reused as `docPath: `${cartDocPath}/migrate``
+  alongside `path: '/:cart_id/migrate'`) -- so the conversion is
+  mechanical:
   - If `docPath` is just `path` translated verbatim (no other router
     mounted in front of it) -- delete the `docPath` line entirely, don't
     add `prefix`. (Registering directly on `app`, or a router mounted at
