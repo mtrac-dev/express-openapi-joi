@@ -44,12 +44,23 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ matrix.node }}
           cache: npm
+      # Coverage runs once, on the leg matching .nvmrc.
+      - name: Check for the .nvmrc leg
+        id: primary
+        run: |
+          if [ "$(cat .nvmrc)" = "${{ matrix.node }}" ]; then
+            echo "leg=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Disable git://
         run: git config --global protocol.git.allow never
       - name: Install dependencies
@@ -58,4 +69,5 @@ jobs:
         run: echo "NPM_CONFIG_IGNORE_SCRIPTS=true" >> "$GITHUB_ENV"
       - name: Run unit tests
         run: npm test
-      - run: npm run check-coverage
+      - if: steps.primary.outputs.leg == 'true'
+        run: npm run check-coverage
