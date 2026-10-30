@@ -15,9 +15,8 @@ const router = express.Router();
 defineRoute.withResponses<{ 200: Thing }>()(router, {
   method: 'get',
   path: '/',
-  // A function call, not a literal/const/template -- resolveStringExpression
-  // can't statically evaluate this, so docPath resolution should fail and
-  // this call gets skipped (logged, not thrown).
+  // A function call can't be evaluated statically, so this call is logged and
+  // skipped.
   prefix: computePrefix(),
   summary: 'Uses a prefix that cannot be statically resolved',
   responses: { 200: { description: 'OK' } },

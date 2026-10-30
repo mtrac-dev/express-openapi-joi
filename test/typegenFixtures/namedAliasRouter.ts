@@ -6,11 +6,8 @@ export interface NamedAliasThing {
   ok: boolean;
 }
 
-// A type alias, not an interface -- deliberately: only a type alias's
-// (not an interface's) literal-keyed shape structurally satisfies
-// withResponses<Responses extends Record<number, unknown>>()'s own
-// constraint without an explicit index signature, and this fixture is
-// specifically testing the type-ALIAS-reference case.
+// A type alias rather than an interface: an interface doesn't satisfy
+// `Record<number, unknown>` without an index signature.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 type NamedResponses = {
   200: NamedAliasThing;

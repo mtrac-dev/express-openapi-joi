@@ -16,8 +16,9 @@
     "plugin:prettier/recommended"
   ],
   "ignorePatterns": ["dist", "test/typegenFixtures/cjsStyle"],
-  "plugins": ["import-x", "prettier", "sonarjs"],
+  "plugins": ["import-x", "prettier", "sonarjs", "tsdoc"],
   "rules": {
+    "tsdoc/syntax": "error",
     "prettier/prettier": "error",
     "import-x/extensions": [
       "error",

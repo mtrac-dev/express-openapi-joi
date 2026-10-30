@@ -13,12 +13,14 @@ import {
 } from './schemaGenerator.ts';
 
 /**
- * True for `defineRoute.withResponses<Responses>()(router, def)` -- the
- * only call shape that carries a `Responses` type argument to read. Plain
- * `defineRoute(router, def)` calls (no compile-time response checking) are
- * left alone entirely; nothing here ever touches their `responses` field.
+ * Check whether a node is a `defineRoute.withResponses<...>()(router, def)`
+ * call.
+ *
+ * @remarks
+ * Plain `defineRoute` calls have no response types to read, and are left
+ * alone.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
 function isWithResponsesCall(node: any): boolean {
   if (!nestedTs.isCallExpression(node)) return false;
   const callee = node.expression;
@@ -28,17 +30,14 @@ function isWithResponsesCall(node: any): boolean {
     nestedTs.isIdentifier(callee.expression.expression) &&
     callee.expression.expression.text === 'defineRoute' &&
     callee.expression.name.text === 'withResponses' &&
-    // withResponses<Responses>() has no default for Responses, so any
-    // call site that actually type-checks always has exactly one type
-    // argument here -- this guards against a malformed/non-type-checked
-    // source file having some other count, not a shape reachable from any
-    // real TypeScript program.
+    // withResponses requires exactly one type argument; this only fails for
+    // code that doesn't type-check.
     /* c8 ignore next */
     (callee.typeArguments?.length ?? 0) === 1
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ts.SourceFile/AST node array, not this project's own typescript's type
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
 function findWithResponsesCalls(sourceFile: any): any[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const results: any[] = [];
@@ -51,9 +50,15 @@ function findWithResponsesCalls(sourceFile: any): any[] {
   return results;
 }
 
-/** status (`200`) -> the response type's own AST node (`Widget`, `Widget[]`, ...). */
+/**
+ * Map each status in a `withResponses` type argument to its type node, such
+ * as `Widget` or `Widget[]`.
+ *
+ * @returns The map, or `undefined` if the type argument isn't an inline
+ *   object type.
+ */
 function extractResponsesMap(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   responsesTypeNode: any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Map<number, any> | undefined {
@@ -72,8 +77,11 @@ function extractResponsesMap(
   return statusToType;
 }
 
-/** Every top-level `const NAME = <expr>;` in the file, as raw (unresolved) initializer nodes. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ts.SourceFile, not this project's own typescript's type
+/**
+ * Collect the initializers of a file's top-level `const` declarations, by
+ * name.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
 function localConstNodes(sourceFile: any): Map<string, any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes = new Map<string, any>();
@@ -89,22 +97,18 @@ function localConstNodes(sourceFile: any): Map<string, any> {
 }
 
 /**
- * Statically evaluates the handful of expression shapes `method`/`path`/
- * `prefix` actually use across a typical defineRoute call: a plain string
- * literal, a local `const` reference to one (resolved via `constMap`,
- * already fully resolved to a string -- see buildConstMap), an `as
- * const`-asserted literal (a common way a shared param-name constant gets
- * declared, e.g. `export const CART_ID = 'cart_id' as const;` -- without
- * unwrapping this, its initializer is an AsExpression wrapping the real
- * string literal, not a StringLiteral node itself, so a `path` expression
- * referencing it via buildConstMap's import resolution would otherwise
- * silently fail to resolve), or a template expression combining any of the
- * above (e.g. `` `${cartPrefix}/migrate` `` or `` `/:${CART_ID}` ``).
- * Anything else -- a function call, a computed member access, ... --
- * returns `undefined` rather than guessing.
+ * Evaluate a `method`, `path` or `prefix` expression to a string without
+ * running it.
+ *
+ * @remarks
+ * Handles string literals, identifiers in `constMap`, `as const` assertions,
+ * and template literals built from these, such as the template literal
+ * `/:${CART_ID}`.
+ *
+ * @returns The string, or `undefined` for any other expression.
  */
 function resolveStringExpression(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   expr: any,
   constMap: Map<string, string>
 ): string | undefined {
@@ -126,21 +130,14 @@ function resolveStringExpression(
 }
 
 /**
- * Resolves one `import { A, B as C } from './relativeModule'` statement's
- * named bindings into `constMap`, if `statement` even is that shape (a
- * relative-module named import) at all -- split out of buildConstMap purely
- * to keep that function's own cognitive complexity down. Import resolution
- * is deliberately bounded to exactly ONE level (an imported name resolves
- * against the target file's own local consts only, never against what THAT
- * file imports in turn) -- not a general transitive walk, which risks a
- * stack overflow on a real, several-files-removed import cycle for no
- * benefit any real router file actually needs -- and resolved via a plain
- * same-directory `.ts` guess (`path.resolve(dirname, specifier) + '.ts'`)
- * rather than running TypeScript's own module resolution, which is all a
- * typical relative import of a shared constants file needs.
+ * Add the string constants named by a relative import to `constMap`.
+ *
+ * @remarks
+ * Only the imported file's own top-level constants are resolved; its imports
+ * aren't followed. An extensionless specifier is read as a `.ts` file.
  */
 function resolveNamedImportConsts(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   statement: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   program: any,
@@ -163,11 +160,8 @@ function resolveNamedImportConsts(
     return;
   }
 
-  // A NodeNext/ESM project (this one included) writes relative imports
-  // with an explicit `.ts` extension already (`'./paths.ts'`); an import
-  // resolved via CommonJS/Node's older module resolution never does
-  // (`'./paths'`) -- appending unconditionally would double it into a
-  // nonexistent `./paths.ts.ts` for the former.
+  // NodeNext imports already end in `.ts`, as in `'./paths.ts'`; older
+  // resolution omits it, as in `'./paths'`.
   const resolvedSpecifier = path.resolve(
     path.dirname(sourceFile.fileName),
     moduleSpecifier.text
@@ -189,19 +183,10 @@ function resolveNamedImportConsts(
 }
 
 /**
- * Every top-level `const NAME = <expr>;` in the file, PLUS every named
- * import of one from a relative module (e.g. a shared param-name constant
- * imported from a sibling `paths.ts`-style file, via
- * resolveNamedImportConsts) -- both fully resolved to their own string
- * value up front (not left as unresolved AST nodes), so a template
- * expression combining the two (e.g. `` `/:${CART_ID}` ``) resolves
- * regardless of which kind of identifier it references. Needed because a
- * defineRoute call's own `path` (not just `prefix`) drives docPath
- * resolution here (see resolveDocPathAndMethod) -- `path` strings often
- * reference a shared param-name constant imported from elsewhere rather
- * than declared locally in the router file itself.
+ * Resolve the string value of each constant a file declares at the top
+ * level or imports by name from a relative path.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ts.Program/ts.SourceFile, not this project's own typescript's type
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
 function buildConstMap(program: any, sourceFile: any): Map<string, string> {
   const constMap = new Map<string, string>();
 
@@ -218,13 +203,13 @@ function buildConstMap(program: any, sourceFile: any): Map<string, string> {
 }
 
 function getObjectLiteralStringProp(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ObjectLiteralExpression, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   obj: any,
   propName: string,
   constMap: Map<string, string>
 ): string | undefined {
   const prop = obj.properties.find(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
     (p: any) =>
       nestedTs.isPropertyAssignment(p) &&
       nestedTs.isIdentifier(p.name) &&
@@ -234,12 +219,14 @@ function getObjectLiteralStringProp(
 }
 
 /**
- * Reproduces defineRoute's own `docPath = (prefix ?? '') + pathToDocSegment(path)`
- * (see ../defineRoute.ts), from the def object literal's own AST instead of
- * running it.
+ * Compute a `defineRoute` call's document path and method from its `def`
+ * object literal, the same way `defineRoute` does.
+ *
+ * @returns The values that could be resolved. `docPath` is missing if `path`
+ *   can't be resolved.
  */
 function resolveDocPathAndMethod(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ObjectLiteralExpression, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   defArg: any,
   constMap: Map<string, string>
 ): { docPath?: string; method?: string } {
@@ -250,23 +237,20 @@ function resolveDocPathAndMethod(
   return { docPath: `${prefix ?? ''}${pathToDocSegment(routePath)}`, method };
 }
 
-// document.paths is typed against real OpenAPI shapes (no generic string
-// index into a PathItemObject's own named method properties, and
-// `responses` itself is optional per the general spec), but every path
-// this module reads back was built by buildOpenApiDocument itself, which
-// always keys each path's entry by real HTTP method names and always sets
-// `responses` -- safe to read back that way in the functions below.
+// An operation from buildOpenApiDocument, which always sets `responses`.
 type ResolvedOperation = OperationObject & {
   responses: Record<string, { description: string }>;
 };
 
 /**
- * Generates and applies one status's schema, once its operation has
- * already been resolved -- split out of processWithResponsesCall purely to
- * keep that function's own complexity down.
+ * Generate the schema for one status and set it on `operation`.
+ *
+ * @throws Error
+ * Thrown if `operation` has no response for `status` to take a description
+ * from.
  */
 function applyGeneratedSchemaForStatus(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript ts.Program, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   program: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   typeNode: any,
@@ -282,14 +266,8 @@ function applyGeneratedSchemaForStatus(
     mergeComponentSchema(componentSchemas, name, def as SchemaObject, source);
   }
 
-  // `responses` is optional on RouteDef, and nothing type-checks that its
-  // keys line up with Responses' own -- a status declared in
-  // withResponses<{...}> with no matching responses[status] entry is
-  // exactly the same "what does this actually mean" gap document.ts no
-  // longer papers over for an undocumented route (see the commit removing
-  // its fabricated-200 default). Erroring here, not defaulting a
-  // description, is what makes that gap visible instead of silently
-  // inventing one.
+  // Nothing checks that `responses` has an entry for each withResponses status.
+  // Throw rather than invent a description.
   const existing = operation.responses[String(status)];
   if (!existing) {
     throw new Error(
@@ -305,12 +283,14 @@ function applyGeneratedSchemaForStatus(
 }
 
 /**
- * Resolves and processes one `defineRoute.withResponses<>()` call site --
- * split out of applyGeneratedResponseSchemas purely to keep that
- * function's own complexity down.
+ * Apply the response schemas of one `defineRoute.withResponses` call to
+ * `document`.
+ *
+ * @throws Error
+ * Thrown if the type argument isn't an inline object type.
  */
 function processWithResponsesCall(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a nested-typescript AST node, not this project's own typescript's type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested-typescript compiler API objects
   call: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   program: any,
@@ -321,12 +301,8 @@ function processWithResponsesCall(
 ): void {
   const responsesTypeNode = call.expression.typeArguments[0];
   const responsesMap = extractResponsesMap(responsesTypeNode);
-  // extractResponsesMap only resolves an inline `{...}` object type
-  // literal -- a named type alias (`withResponses<SomeAlias>()`) is a
-  // TypeReferenceNode, not a TypeLiteralNode, and would otherwise silently
-  // produce no schema at all for every status in it. That's the same
-  // "gap masquerading as success" this module already refuses to allow
-  // for a missing description below -- loud here too, not a silent skip.
+  // A named type argument, such as `withResponses<WidgetResponses>()`, can't be
+  // read. Throw rather than skip every status silently.
   if (!responsesMap) {
     throw new Error(
       `applyGeneratedResponseSchemas: ${relativeFile} -- a withResponses<> call's type argument must be an ` +
@@ -351,11 +327,7 @@ function processWithResponsesCall(
     string,
     Record<string, ResolvedOperation>
   >;
-  // TS's Record indexing doesn't type an absent key as `undefined` (that
-  // needs noUncheckedIndexedAccess) -- this cast states explicitly what's
-  // actually true at runtime for a docPath+method this pass can't
-  // statically resolve to a real operation in the built document: both
-  // levels can genuinely be missing.
+  // Either level may be missing if the call doesn't match a documented route.
   const pathsForDocPath = pathsRecord[docPath] as
     Record<string, ResolvedOperation> | undefined;
   const operation = pathsForDocPath?.[method];
@@ -381,32 +353,49 @@ function processWithResponsesCall(
 }
 
 /**
- * Runs the extraction (AST) + generation (schemaGenerator.ts) pass over
- * every given file that uses `defineRoute.withResponses`, and fills in
- * `responses[status].content` on the ALREADY-BUILT OpenAPI document for
- * any (docPath, method, status) it can resolve a schema for -- as a post-
- * process on `buildOpenApiDocument`'s own output, rather than threading a
- * second accumulator through document.ts itself. Only ever ADDS/overwrites
- * a response's `content.schema`; the `description` a route (or
- * `commonResponses`) already gave that status is left untouched.
+ * Fill in response body schemas from the types given to
+ * `defineRoute.withResponses`.
  *
- * A docPath+method a stack of registrations shares (e.g. a role-gated
- * route falling through to a different handler per caller) naturally
- * generates the same schema from each of its own `withResponses` call
- * sites -- `mergeComponentSchema`'s existing dedupe-or-throw check (the
- * same one document.ts already uses for Joi `.id()` collisions) is what
- * catches it if two registrations sharing a key ever disagree, rather than
- * silently keeping whichever one happened to run last.
+ * @remarks
+ * Reads the TypeScript source of each file in `files`, finds its
+ * `defineRoute.withResponses<...>()` calls, and sets the response schema for
+ * each status on the matching operation, adding the types to
+ * `components.schemas`. Response descriptions are left as they are.
  *
- * @param document The document buildOpenApiDocument already built, mutated
- *   in place.
- * @param files Absolute paths to every file that might contain a
- *   `defineRoute.withResponses<>` call. This module doesn't scan a
- *   directory itself -- pass the exact set of files your own route
- *   registration lives in (e.g. via your own `fs.readdirSync` over
- *   whichever directory that is in your project).
- * @param tsconfigPath Absolute path to the tsconfig.json whose
- *   compilerOptions resolve `files`' own types.
+ * A call is read only if:
+ *
+ * - its type argument is an inline object type, such as
+ *   `withResponses<{ 200: Widget[] }>()`
+ * - each status maps to a named type or interface, or an array of one
+ * - the route's `prefix` and `path` are string literals, or string constants
+ *   declared in the file or imported from a relative path
+ *
+ * Other calls, and calls that match no operation in `document`, are skipped.
+ * Most skips log a message to `console.error`.
+ *
+ * A type with a `toJSON()` method is documented by what `toJSON()` returns.
+ *
+ * @param document - The document from `buildOpenApiDocument`, updated in
+ *   place.
+ * @param files - Absolute paths of the route files to read. Directories
+ *   aren't scanned; `fileLooksLikeItUsesWithResponses` helps filter a listing.
+ * @param tsconfigPath - Absolute path to the `tsconfig.json` that resolves
+ *   the types in `files`.
+ *
+ * @throws Error
+ * Thrown if a file doesn't exist, if a type argument is a named type instead
+ * of an inline object type, if a status maps to an inline type, a union or a
+ * generic instantiation, or if a status has no `responses` entry to take its
+ * description from.
+ *
+ * @example
+ * ```ts
+ * applyGeneratedResponseSchemas(
+ *   document,
+ *   [path.resolve('src/routes/widgets.ts')],
+ *   path.resolve('tsconfig.json')
+ * );
+ * ```
  */
 export function applyGeneratedResponseSchemas(
   document: OpenApiDocument,
@@ -422,12 +411,7 @@ export function applyGeneratedResponseSchemas(
   for (const file of files) {
     const program = createFileProgram(file, tsconfigPath);
     const sourceFile = program.getSourceFile(file);
-    // createFileProgram builds its Program from exactly [file] as the
-    // root -- confirmed empirically that TS's own path normalization
-    // reconciles a relative `file` against the same canonical entry
-    // either way, so this hasn't been reproducible with any real input;
-    // kept as a guard against a future createFileProgram change that
-    // stops guaranteeing that, rather than assuming it silently.
+    // `file` is the program's root, so this can't happen.
     /* c8 ignore next 5 */
     if (!sourceFile) {
       throw new Error(
@@ -451,9 +435,13 @@ export function applyGeneratedResponseSchemas(
   }
 }
 
-// Re-exported so a consumer's own directory-scan (see the `files` param
-// doc above) can filter to just the files worth parsing, the same
-// substring check this module's own development used to verify against.
+/**
+ * Check whether a file mentions `withResponses`, as a quick filter for route
+ * files.
+ *
+ * @param file - Path of the file to read.
+ * @returns `true` if the file's text contains `withResponses`.
+ */
 export function fileLooksLikeItUsesWithResponses(file: string): boolean {
   return fs.readFileSync(file, 'utf8').includes('withResponses');
 }

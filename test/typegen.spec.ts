@@ -24,11 +24,8 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
   it('fills in $ref/array/toJSON-derived response schemas and components.schemas', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
-    // The fixture's own routes aren't registered against this registry --
-    // seed matching path entries directly, the same shape
-    // buildOpenApiDocument itself would have produced for them, so this
-    // test exercises applyGeneratedResponseSchemas' own generation and
-    // application logic in isolation from defineRoute/buildOpenApiDocument.
+    // Seed the paths buildOpenApiDocument would produce for the fixture's
+    // routes, so this tests applyGeneratedResponseSchemas alone.
     doc.paths['/widgets/{id}'] = {
       get: {
         summary: 'Get a widget',
@@ -82,8 +79,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     expect(serializableSchema).to.eql({
       $ref: '#/components/schemas/SerializableThing',
     });
-    // toJSON's own return type, not the class's real shape (which would
-    // include the toJSON method itself as a property).
+    // toJSON's return type, not the class's shape.
     expect(doc.components.schemas?.SerializableThing).to.eql({
       type: 'object',
       properties: { code: { type: 'string' }, msg: { type: 'string' } },
@@ -92,7 +88,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     });
   });
 
-  it('resolves a path built from a relatively-imported, `as const`-declared constant', () => {
+  it('resolves a path built from an imported `as const` constant', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     doc.paths['/gadgets/{gadget_id}'] = {
@@ -127,7 +123,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     });
   });
 
-  it("resolves a path built from an extensionless relative import (a classic-resolution consumer's own convention)", () => {
+  it('resolves a path built from an extensionless relative import', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     doc.paths['/doohickeys/{widget_id}'] = {
@@ -158,7 +154,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     });
   });
 
-  it('throws when a withResponses<> call uses a named type alias instead of an inline literal', () => {
+  it('throws when the withResponses type argument is a named type', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
 
@@ -187,7 +183,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     }).to.throw(/generic instantiation/);
   });
 
-  it('throws when a response type is an unsupported shape (an inline union)', () => {
+  it('throws when a response type is an inline union', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     doc.paths['/unsupported-shape'] = {
@@ -219,7 +215,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     }).to.throw(/declares 404 in withResponses/);
   });
 
-  it("skips (logging, not throwing) a call whose docPath can't be statically resolved", () => {
+  it("logs and skips a call whose docPath can't be resolved", () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     const consoleError = sinon.stub(console, 'error');
@@ -241,7 +237,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     }
   });
 
-  it('skips (logging, or silently) several other unresolvable/unsupported call shapes', () => {
+  it('skips other calls that cannot be resolved', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     const consoleError = sinon.stub(console, 'error');
@@ -254,12 +250,10 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
           TSCONFIG_PATH
         );
       }).not.to.throw();
-      // An imported (not locally-const) prefix, and a bare-root path with
-      // no prefix at all, both resolve to an empty docPath -- "couldn't
-      // resolve". A genuinely-unresolvable (function-call) path -- same
-      // message. A variable (not an inline object literal) def argument
-      // skips silently, with no message of its own -- not asserted here,
-      // since there's nothing to assert against.
+      // An imported prefix and a bare-root path with no prefix resolve to an
+      // empty docPath, and a function-call path doesn't resolve; all three log
+      // the same message. A def passed as a variable is skipped without a
+      // message.
       sinon.assert.calledWith(
         consoleError,
         sinon.match(/couldn't statically resolve docPath\/method/)
@@ -273,10 +267,9 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     }
   });
 
-  it('skips (logging, not throwing) a call whose docPath+method has no matching operation in the document', () => {
+  it('logs and skips a call that matches no operation in the document', () => {
     const { buildOpenApiDocument } = createRouteRegistry();
-    // No matching paths seeded at all -- basicRouter.ts's own docPaths
-    // ('/widgets/{id}', '/widgets/extra', '/widgets/serializable') are absent.
+    // No paths are seeded, so none of basicRouter.ts's routes match.
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     const consoleError = sinon.stub(console, 'error');
 
@@ -310,7 +303,7 @@ describe('UNIT: applyGeneratedResponseSchemas', () => {
     }).to.throw(/no such file/);
   });
 
-  it("falls back to a toJSON property's own shape when it isn't callable", () => {
+  it("uses the type's shape when its toJSON property isn't callable", () => {
     const { buildOpenApiDocument } = createRouteRegistry();
     const doc = buildOpenApiDocument({ title: 't', version: '1' });
     doc.paths['/non-callable-tojson'] = {

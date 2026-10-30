@@ -1,201 +1,95 @@
 # express-openapi-joi
 
-Generates OpenAPI 3 documents from Express routes validated with Joi.
+Define an Express route and its Joi schemas once, and get request validation,
+typed handlers and an OpenAPI 3.1 document from the same definition.
 
-## Status
+```ts
+defineRoute(router, {
+  method: 'post',
+  path: '/:id',
+  prefix: '/widgets',
+  request: {
+    params: Joi.object({ id: Joi.string().uuid().required() }),
+    body: Joi.object<{ name: string }>({ name: Joi.string().required() }),
+  },
+  responses: { 201: { description: 'Created' } },
+  handler: (req, res) => {
+    // req.params.id and req.body.name are both typed
+    res.status(201).json({ id: req.params.id, name: req.body.name });
+  },
+});
+```
 
-Core generator is in place: `defineRoute` registers an Express route and its
-Joi schemas in one call against the library's default registry, and
-`buildOpenApiDocument`/`createOpenApiRouter` build and serve the resulting
-OpenAPI 3.1 document (paths, path/query/header parameters, request bodies,
-responses, and security schemes, merged correctly across routes that share a
-docPath+method). `createRouteRegistry<TScheme>()` is also available
-directly, for an isolated registry instead of the default shared one --
-`TScheme` optionally narrows every `security` field checked through it from
-the library's default, permissive `SecurityScheme` (`string`) down to a
-caller's own closed set of real scheme names. See "Isolated registries"
-below.
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Validation](#validation)
+- [Paths](#paths)
+- [Responses](#responses)
+- [Reusable schemas](#reusable-schemas)
+- [Security](#security)
+- [Typed `res.locals`](#typed-reslocals)
+- [Public and internal documents](#public-and-internal-documents)
+- [Response schemas from TypeScript types](#response-schemas-from-typescript-types)
+- [API](#api)
+- [Development](#development)
 
-The document's types come from `openapi3-ts/oas31` (a real, maintained
-OpenAPI 3.1 type package), not hand-rolled interfaces. A Joi schema marked
-with `.id('Name')` is emitted as `$ref: '#/components/schemas/Name'` plus a
-`components.schemas.Name` entry, instead of the same shape repeated inline
-at every call site that reuses it -- reusing the same id across two
-differently-shaped schemas throws at document-build time rather than
-silently documenting one and discarding the other. `operationId` defaults
-to `handler`'s own function name (falling back to a derived
-method+docPath name, e.g. `getWidgetsId`, when the handler is anonymous or
-its inferred name is just the literal `"handler"` -- see
-`RouteDef.operationId`'s own JSDoc for the full fallback chain and its one
-documented gap). `buildOpenApiDocument` also takes an optional
-`commonResponses` (merged into every operation, e.g. the 400/404/500 an
-app-wide error handler can produce regardless of which route ran).
-
-`defineRoute.withResponses<{ 200: Widget }>()(router, {...})` -- an
-alternative to plain `defineRoute` -- type-checks `handler`'s `res` against
-a per-status response map (`res.status(200).json(...)` only accepts a
-`Widget` there), and, paired with the separate `./typegen` subpath export,
-generates `responses[status].schema` from those same TypeScript types
-instead of hand-writing JSON Schema for them. See "Typed responses" and
-"Generating response schemas from TypeScript" below. `applyDiscriminatorMappings`
-backfills `discriminator.mapping` on any generated discriminated-union
-response type, so generated clients can actually switch on it -- see
-"Discriminator mappings for generated unions" below.
-
-`RouteDef.private` marks a registration as internal-only, so a caller can
-build both a public and a full document from the same registry by
-filtering `routeRegistry` before calling `buildOpenApiDocument` -- see
-"Public/internal document split" below.
-
-A request failing Joi validation is forwarded to Express's error-handling
-chain (`next(error)`, the raw Joi `ValidationError`) rather than responded
-to directly -- an app decides how that becomes an HTTP response, via the
-provided `validationErrorHandler` or its own existing error-handling
-middleware. See "Validation error handling" below.
-
-See `src/index.ts` for the full public API.
-
-## Installation
+## Install
 
 ```bash
 npm install @mtrac/express-openapi-joi
 ```
 
-`express` and `joi` are peer dependencies — install whichever versions your
-project already uses.
+`express` (4 or 5) and `joi` (17) are peer dependencies. Node 22 or later is
+required. The package ships both ESM and CommonJS builds.
 
-## Usage
-
-Import `defineRoute` and `routeRegistry` directly -- most apps only need one,
-process-wide registry, and these are bound to the library's default instance
-already. Register routes against it with `defineRoute`, then serve the
-generated document with `createOpenApiRouter`:
+## Quick start
 
 ```ts
 import express from 'express';
 import Joi from 'joi';
 import {
+  createOpenApiRouter,
   defineRoute,
   routeRegistry,
-  createOpenApiRouter,
   validationErrorHandler,
 } from '@mtrac/express-openapi-joi';
 
-const widgetsRouter = express.Router();
-defineRoute(widgetsRouter, {
-  method: 'post',
-  path: '/:id',
+const widgets = express.Router();
+
+defineRoute(widgets, {
+  method: 'get',
+  path: '/',
   prefix: '/widgets',
-  summary: 'Create a widget',
+  summary: 'List widgets',
   request: {
-    params: Joi.object({ id: Joi.string().uuid().required() }),
-    body: Joi.object({ name: Joi.string().required() }),
+    query: Joi.object<{ limit: number }>({
+      limit: Joi.number().integer().min(1).default(20),
+    }),
   },
+  responses: { 200: { description: 'A page of widgets' } },
   handler: (req, res) => {
-    // req.params.id and req.body.name are typed from the schemas above.
-    res.status(201).json({ id: req.params.id, name: req.body.name });
+    res.json({ limit: req.query.limit, items: [] });
   },
 });
 
 const app = express();
 app.use(express.json());
-app.use('/widgets', widgetsRouter);
+app.use('/widgets', widgets);
 app.use(
   '/openapi.json',
-  createOpenApiRouter({
-    title: 'my-service',
-    version: '1.0.0',
-    routeRegistry,
-    // Optional: gate the document the same way any other internal route
-    // is gated in this app (an API-key check, auth middleware, ...).
-    middleware: [myApiKeyAuthMiddleware],
-  })
+  createOpenApiRouter({ title: 'Widgets API', version: '1.0.0', routeRegistry })
 );
-// See "Validation error handling" below -- without this (or your own
-// equivalent), a validation failure falls through to Express's own
-// default error handler instead of responding 400.
 app.use(validationErrorHandler);
+
+app.listen(3000);
 ```
 
-### Validation error handling
+`GET /openapi.json` now serves the document, built once on first request and
+cached.
 
-A request that fails Joi validation is forwarded to Express's error-handling
-chain via `next(error)` -- the raw Joi `ValidationError`, not this library's
-own type -- rather than being responded to directly. How that becomes an
-HTTP response (status, body shape, logging) is an app-wide concern, not
-something a per-field validator should decide unilaterally; every route
-using `request: {...}` shares whatever's mounted after it.
-
-`validationErrorHandler` is a ready-made terminal handler for an app with no
-error-formatting conventions of its own: mount it after your routes and a
-validation failure responds 400 with `{ message, details }`, same as this
-library's very first version did unconditionally.
-
-An app with its own error envelope (e.g. an existing `app.use(errorHandler)`
-that already formats every other kind of thrown error) doesn't need
-`validationErrorHandler` at all -- add one branch to that existing handler
-instead:
-
-```ts
-import { ValidationError } from 'joi';
-
-// Inside your app's existing error-handling middleware:
-if (cause instanceof ValidationError) {
-  res.status(400).json(toYourAppsErrorShape(cause));
-  return;
-}
-```
-
-### Security schemes
-
-This library doesn't define any security schemes itself -- pass your own
-`components.securitySchemes` map, and either tag the enforcing middleware
-with `securedBy` (for a simple, fixed check) or state `security` explicitly
-on the route:
-
-```ts
-import { securedBy, createOpenApiRouter } from '@mtrac/express-openapi-joi';
-
-const SECURITY_SCHEMES = {
-  ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
-};
-
-const apiKeyAuth = securedBy(myApiKeyAuthMiddleware, 'ApiKeyAuth');
-
-defineRoute(widgetsRouter, {
-  method: 'get',
-  path: '/',
-  prefix: '/widgets',
-  middleware: [apiKeyAuth], // security: ['ApiKeyAuth'] is inferred automatically
-  handler: (_req, res) => res.status(200).json([]),
-});
-
-app.use(
-  '/openapi.json',
-  createOpenApiRouter({
-    title: 'my-service',
-    version: '1.0.0',
-    routeRegistry,
-    securitySchemes: SECURITY_SCHEMES,
-  })
-);
-```
-
-`security`'s own type -- both stated directly and inferred via `securedBy` -- is plain
-`string` by default, since this library has no way to know your scheme names. A typo'd
-scheme name (`security: ['ApiKeyAuht']`) compiles clean and produces a `security`
-requirement that references a name absent from `components.securitySchemes` --
-invalid per the OpenAPI spec itself, but only ever discovered downstream (client
-generation, spec validation), nowhere near where the typo was actually written. If you
-have a small, fixed, real set of scheme names, `createRouteRegistry<TScheme>()` closes
-that gap -- see "Isolated registries" below.
-
-### Isolated registries
-
-Reach for `createRouteRegistry()` instead of the default `defineRoute`/
-`routeRegistry` export when you genuinely need more than one registry in a
-single process -- every test in this repo does exactly that, so each test
-gets its own empty registry with no cleanup required between tests:
+`defineRoute` and `routeRegistry` are bound to a default, process-wide
+registry. For a separate registry (one per test, or several APIs in one
+process), create your own:
 
 ```ts
 import { createRouteRegistry } from '@mtrac/express-openapi-joi';
@@ -204,75 +98,110 @@ const { defineRoute, routeRegistry, buildOpenApiDocument } =
   createRouteRegistry();
 ```
 
-Also reach for it -- even with only one registry -- to narrow `RouteDef.security`'s
-type from the library's default, permissive `SecurityScheme` (`string`) down to your
-own closed set of real scheme names:
+## Validation
+
+Each `request` schema runs as middleware before your own `middleware` and
+`handler`:
+
+| Schema    | On success                                       | Unknown keys |
+| --------- | ------------------------------------------------ | ------------ |
+| `body`    | `req.body` is replaced with the validated value  | stripped     |
+| `query`   | `req.query` is replaced with the validated value | stripped     |
+| `params`  | validated only; `req.params` is left as is       | allowed      |
+| `headers` | validated only; `req.headers` is left as is      | allowed      |
+
+All errors are collected (`abortEarly: false`). Defaults and conversions from
+your schema apply to `body` and `query`, so `req.query.limit` above is a
+number.
+
+`req.body` and `req.query` take their TypeScript types from the schema's type
+parameter: `Joi.object<{ limit: number }>(...)`. Without one, Joi types the
+value as `any`. `req.params` is typed from the `path` string instead (see
+[Paths](#paths)).
+
+A failed validation calls `next(err)` with Joi's `ValidationError`; nothing is
+sent until an error handler responds. Mount `validationErrorHandler` after
+your routes to respond `400 { message, details }`. Without an error handler,
+Express's default one responds 500.
+
+To use your own error format, handle the error yourself instead:
 
 ```ts
-const { defineRoute, routeRegistry } = createRouteRegistry<
-  'ApiKeyAuth' | 'BearerAuth'
->();
+import type { ErrorRequestHandler } from 'express';
+import Joi from 'joi';
 
-defineRoute(widgetsRouter, {
+const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
+  if (err instanceof Joi.ValidationError) {
+    res.status(400).json({ code: 'invalid_request', errors: err.details });
+    return;
+  }
+  next(err);
+};
+app.use(errorHandler);
+```
+
+Use `Joi.ValidationError` from the default import: `import { ValidationError }
+from 'joi'` type-checks but is `undefined` at runtime under ESM.
+
+## Paths
+
+The document path is `prefix + path`, with Express params (`:id`, `:id?`,
+`:id(\d+)`) written as `{id}`. Set `prefix` to the path the router is mounted
+at, and leave it out for routes on `app` itself.
+
+```ts
+app.use('/carts/:cartId/items', items); // items = express.Router({ mergeParams: true })
+
+defineRoute(items, {
   method: 'get',
-  path: '/',
+  path: '/:itemId',
+  prefix: '/carts/{cartId}/items',
+  params: ['cartId', 'itemId'] as const,
+  handler: (req, res) => {
+    res.json({ cart: req.params.cartId, item: req.params.itemId });
+  },
+});
+// documented as GET /carts/{cartId}/items/{itemId}
+```
+
+`req.params` is typed from the `path` literal. Pass `params` (with `as const`)
+when inference can't see a param: one inherited through `mergeParams`, an
+optional segment, or a regex constraint.
+
+Wildcard paths (`*`) have no OpenAPI equivalent, and `defineRoute` throws for
+them. Register those routes directly on the router.
+
+## Responses
+
+Document each status a route returns. `schema` is plain JSON Schema:
+
+```ts
+defineRoute(widgets, {
+  method: 'get',
+  path: '/:id',
   prefix: '/widgets',
-  security: ['ApiKeyAuth'], // a typo here is now a compile error
-  handler: (_req, res) => res.status(200).json([]),
+  responses: {
+    200: {
+      description: 'The widget',
+      schema: {
+        type: 'object',
+        properties: { id: { type: 'string' }, name: { type: 'string' } },
+        required: ['id', 'name'],
+      },
+    },
+    404: { description: 'No widget with that id' },
+  },
+  handler: getWidget,
 });
 ```
 
-Given once, at registry creation -- there's nothing in an individual `defineRoute` call
-for `TScheme` to be inferred from, and every registration made through the returned
-`defineRoute`/`defineRoute.withResponses` picks it up automatically. Only narrows
-`security`'s own type; `securedBy`'s own `scheme` parameter stays `SecurityScheme`
-regardless.
+A route with no `responses` documents none; no default `200` is added.
 
-### Public/internal document split
-
-`RouteDef.private` is a plain data field -- stated explicitly on a
-registration, not inferred from `security` -- so a caller can build two
-documents from the same registry: a full one for internal use, and a
-public one with every `private` registration filtered out before the
-docPath+method merge runs:
+To check `handler` against the documented responses, use
+`defineRoute.withResponses`. `res.status(code).json(body)` then only accepts
+the type mapped to that status:
 
 ```ts
-import {
-  buildOpenApiDocument,
-  routeRegistry,
-} from '@mtrac/express-openapi-joi';
-
-const fullDocument = buildOpenApiDocument(routeRegistry, {
-  title: 't',
-  version: '1',
-});
-const publicDocument = buildOpenApiDocument(
-  routeRegistry.filter((r) => !r.private),
-  { title: 't', version: '1' }
-);
-```
-
-A docPath+method shared by a mix of private/public registrations (e.g. a
-role-gated route falling through to a different handler per caller) still
-merges normally in the public document -- it just documents only the
-non-private branches' own parameters/security, the same as if the private
-branches didn't exist. A docPath+method with no non-private branch at all
-is absent from the public document entirely.
-
-### Typed responses
-
-Express's own `Response<ResBody>.status(code)` returns the same
-`Response<ResBody>` regardless of `code` -- there's no built-in way to tie
-a specific status literal to its own response shape. `defineRoute.withResponses<Responses>()`
-is an alternative to plain `defineRoute` that fixes that: it's curried
-(call it with the response map first, then call the function it returns
-exactly like `defineRoute`) because TypeScript stops inferring every
-other type parameter the instant any explicit type argument is given, and
-currying isolates `Responses` into a call with nothing else to infer.
-
-```ts
-import { defineRoute } from '@mtrac/express-openapi-joi';
-
 interface Widget {
   id: string;
   name: string;
@@ -281,87 +210,161 @@ interface NotFound {
   message: string;
 }
 
-defineRoute.withResponses<{ 200: Widget; 404: NotFound }>()(widgetsRouter, {
+defineRoute.withResponses<{ 200: Widget; 404: NotFound }>()(widgets, {
   method: 'get',
   path: '/:id',
   prefix: '/widgets',
-  summary: 'Get a widget',
   responses: {
     200: { description: 'The widget' },
     404: { description: 'No widget with that id' },
   },
   handler: (req, res) => {
-    // res.status(200).json(...) only accepts a Widget here; res.status(404)
-    // only accepts a NotFound. A computed status code (no .status() call
-    // narrowing it to a literal) falls back to the full union, same as a
-    // plain defineRoute handler always has.
-    res.status(200).json({ id: req.params.id, name: 'thing' });
+    const widget = findWidget(req.params.id);
+    if (!widget) {
+      res.status(404).json({ message: 'Not found' });
+      return;
+    }
+    res.status(200).json(widget);
   },
 });
 ```
 
-This is purely a compile-time check on `handler` -- `responses[status].schema`
-still needs either a hand-written `schema` on the `responses` entry above, or
-the separate `./typegen` subpath below, to actually document the response
-body's shape.
+This is a compile-time check only. To document the response bodies from the
+same types, see [Response schemas from TypeScript
+types](#response-schemas-from-typescript-types).
 
-### Generating response schemas from TypeScript (`./typegen`)
-
-A separate subpath export -- not part of the main package entry point,
-since it pulls in `ts-json-schema-generator` and the TypeScript compiler
-API, real weight a consumer only using `defineRoute`/`buildOpenApiDocument`
-shouldn't have to carry. Generates `responses[status].schema` from a
-`withResponses<>` call's own response types, the same "the TypeScript type
-is the source of truth" idea `.id()` already gives request bodies via
-joi-to-json, as a post-process on an already-built document:
+For responses every route can return (say, a 500 from your error handler),
+build the document with `commonResponses`. A route's own entry for the same
+status wins.
 
 ```ts
-import { applyGeneratedResponseSchemas } from '@mtrac/express-openapi-joi/typegen';
+const document = buildOpenApiDocument(routeRegistry, {
+  title: 'Widgets API',
+  version: '1.0.0',
+  commonResponses: { 500: { description: 'Internal error' } },
+});
+app.get('/openapi.json', (req, res) => res.json(document));
+```
 
-// After buildOpenApiDocument():
-applyGeneratedResponseSchemas(
-  document,
-  // Absolute paths to every file that might contain a
-  // defineRoute.withResponses<>() call -- this module doesn't scan a
-  // directory itself; walk your own routes directory and filter with the
-  // re-exported fileLooksLikeItUsesWithResponses if you want that
-  // convenience.
-  routeFiles,
-  // Absolute path to the tsconfig.json whose compilerOptions resolve
-  // those files' own types.
-  tsconfigPath
+## Reusable schemas
+
+Give a Joi schema an id and it's emitted once under `components.schemas`, then
+referenced with `$ref` wherever it's used:
+
+```ts
+const Address = Joi.object({
+  line1: Joi.string().required(),
+  city: Joi.string().required(),
+}).id('Address');
+```
+
+Building the document throws if two different schemas share an id.
+
+## Security
+
+Pass your security schemes to the document, then declare which ones each
+route accepts:
+
+```ts
+import { securedBy } from '@mtrac/express-openapi-joi';
+
+const securitySchemes = {
+  ApiKeyAuth: { type: 'apiKey', in: 'header', name: 'x-api-key' },
+  BearerAuth: { type: 'http', scheme: 'bearer' },
+} as const;
+
+// Tag a middleware once; every route using it documents ApiKeyAuth.
+const requireApiKey = securedBy(apiKeyMiddleware, 'ApiKeyAuth');
+
+defineRoute(widgets, {
+  method: 'delete',
+  path: '/:id',
+  prefix: '/widgets',
+  middleware: [requireApiKey],
+  handler: deleteWidget,
+});
+
+// Or state it on the route. 'public' marks no-auth as one accepted option.
+defineRoute(widgets, {
+  method: 'get',
+  path: '/:id',
+  prefix: '/widgets',
+  security: ['BearerAuth', 'public'],
+  handler: getWidget,
+});
+
+app.use(
+  '/openapi.json',
+  createOpenApiRouter({
+    title: 'Widgets API',
+    version: '1.0.0',
+    routeRegistry,
+    securitySchemes,
+  })
 );
 ```
 
-Every `withResponses<{...}>` value must be a plain named type/interface
-reference (or an array of one) -- an inline union, an inline object
-literal, or a generic instantiation written directly throws instead of
-silently generating no schema (or the wrong one); give it its own
-concrete, non-generic named type alias instead. A type with a `toJSON`
-method (checked structurally, not by name) generates from that method's
-own return type instead of the type's own shape, since that's what
-`res.json()` actually sends over the wire.
+`securedBy` suits middleware that always enforces the same scheme. For
+anything conditional, state `security` on the route. A route with neither
+documents no security requirement.
 
-Runs identically under both ESM and CJS, same as every other export in
-this package -- reaching into `ts-json-schema-generator`'s own nested
-`typescript` install (needed so both this module and it agree on the same
-`ts.SyntaxKind` numbering) needs `require.resolve`'s `paths` option, which
-has no ESM-native equivalent; this is handled internally via
-`module.createRequire`, not something a caller needs to think about.
-
-### Discriminator mappings for generated unions (`applyDiscriminatorMappings`)
-
-A response type that's a discriminated union (a `@discriminator
-propertyName` JSDoc tag, `discriminatorType: 'open-api'` in the typegen
-config) comes out of `applyGeneratedResponseSchemas` as a real OpenAPI
-`{ discriminator: { propertyName }, oneOf }` shape, but the generator never
-populates `discriminator.mapping` -- the part that says which literal
-discriminator value corresponds to which `oneOf` variant. Without it, a
-generated client can't build the discriminator's value→variant switch at
-all. `applyDiscriminatorMappings` backfills it, generically, for every
-discriminated union in `components.schemas`:
+Scheme names are plain strings by default, so a typo silently produces an
+invalid document. Give your registry the set of names to make it a compile
+error:
 
 ```ts
+const { defineRoute, routeRegistry } = createRouteRegistry<
+  'ApiKeyAuth' | 'BearerAuth'
+>();
+```
+
+To restrict who can fetch the document itself, pass
+`middleware: [requireApiKey]` (or any middleware) to `createOpenApiRouter`.
+
+## Typed `res.locals`
+
+Type your middleware as a `Provider<Locals>`, and `res.locals` in the handler
+is typed from every provider in `middleware`:
+
+```ts
+import type { Provider } from '@mtrac/express-openapi-joi';
+
+const loadUser: Provider<{ user: User }> = async (req, res, next) => {
+  res.locals.user = await findUser(req.get('authorization'));
+  next();
+};
+
+defineRoute(widgets, {
+  method: 'get',
+  path: '/mine',
+  prefix: '/widgets',
+  middleware: [loadUser],
+  handler: (req, res) => {
+    res.json(listWidgetsFor(res.locals.user)); // res.locals.user: User
+  },
+});
+```
+
+## Public and internal documents
+
+Mark internal routes with `private: true`, then build a public document from
+the filtered registry:
+
+```ts
+const internal = buildOpenApiDocument(routeRegistry, { title, version });
+const external = buildOpenApiDocument(
+  routeRegistry.filter((route) => !route.private),
+  { title, version }
+);
+```
+
+## Response schemas from TypeScript types
+
+The `/typegen` entry point reads your route files and fills in each
+`withResponses` route's response schemas from its TypeScript types:
+
+```ts
+import path from 'node:path';
 import {
   applyDiscriminatorMappings,
   buildOpenApiDocument,
@@ -369,133 +372,86 @@ import {
 } from '@mtrac/express-openapi-joi';
 import { applyGeneratedResponseSchemas } from '@mtrac/express-openapi-joi/typegen';
 
-const document = buildOpenApiDocument(routeRegistry, {
-  title: 't',
-  version: '1',
-});
-applyGeneratedResponseSchemas(document, routeFiles, tsconfigPath);
-// Run AFTER applyGeneratedResponseSchemas -- a discriminated union that
-// only exists because of that step isn't in components.schemas yet if
-// this runs any earlier.
-applyDiscriminatorMappings(document.components.schemas);
+const document = buildOpenApiDocument(routeRegistry, { title, version });
+
+applyGeneratedResponseSchemas(
+  document,
+  [path.resolve('src/routes/widgets.ts')], // absolute paths to route files
+  path.resolve('tsconfig.json')
+);
+
+// Optional: add discriminator.mapping to generated discriminated unions,
+// so generated clients can tell the variants apart.
+applyDiscriminatorMappings(
+  document.components.schemas as Parameters<
+    typeof applyDiscriminatorMappings
+  >[0]
+);
 ```
 
-Each mapping entry is derived from the variant's own discriminator
-property -- a JSON Schema `const`, or a single-value `enum` -- throwing
-rather than skipping if a variant doesn't actually narrow that property to
-one literal value, since a mapping entry silently left off would leave
-that variant unreachable at runtime exactly as if this step had never run.
+It reads TypeScript source, so run it where your sources and `tsconfig.json`
+are available, for example in a build script that writes the document to a
+file. It is a separate entry point so apps that don't use it never load the
+TypeScript compiler.
 
-### Swapping into an app that already hand-rolls this (e.g. registry.ts/security.ts/openapiRouter.ts)
+Rules for `withResponses` calls:
 
-If an app already has its own local `defineRoute`/`buildOpenApiDocument`
-implementation, the usual shape after adopting this package is:
+- Write the map inline: `withResponses<{ 200: Widget[] }>()`. A named type
+  for the whole map (`withResponses<WidgetResponses>()`) throws.
+- Each status must map to a named type or interface (or an array of one),
+  such as `Widget[]`. Inline object types, inline unions and generic
+  instantiations throw; give them a named alias instead.
+- Each status needs a `responses` entry, which supplies its description.
+  A missing one throws.
+- `prefix` and `path` must be string literals, or string constants declared
+  in the file or imported from a relative path. Calls it can't resolve are
+  skipped, with a message on `console.error`.
+- A type with a `toJSON()` method is documented by what `toJSON()` returns,
+  since that is what `res.json()` sends.
+- `fileLooksLikeItUsesWithResponses(file)` is exported to help filter a
+  directory listing down to route files.
 
-- **`registry.ts`** — delete it. Every router file that imported
-  `defineRoute`/`routeRegistry` from it can import those directly from this
-  package instead (`export { defineRoute, routeRegistry } from
-'@mtrac/express-openapi-joi';` there too, if you'd rather keep the
-  existing import path unchanged everywhere else).
-- **`security.ts`** — keep the app's own `SECURITY_SCHEMES` const (this
-  package doesn't know your schemes), but import `securedBy`/
-  `inferSecurity`/`mergeSecurity` and the `SecurityScheme`/
-  `SecurityRequirement`/`SecurityRequirementObject` types from this package
-  instead of defining them locally.
-- **`openapiRouter.ts`** — replace the hand-rolled router with
-  `createOpenApiRouter({ title, version, routeRegistry, securitySchemes:
-SECURITY_SCHEMES, middleware: [yourExistingAuthMiddleware] })`.
+## API
 
-Every other router file (wherever `defineRoute`/`RouteDef`/`Provider` are
-imported) just needs its import path repointed at this package. Four
-behavioral differences from a typical hand-rolled implementation are
-worth knowing up front -- two of them (`docPath`, validation error
-handling) DO need edits elsewhere in the app, the other two don't:
+From `@mtrac/express-openapi-joi`:
 
-- **`docPath` is gone.** `RouteDef` no longer has a `docPath` field at
-  all -- `prefix` is now the only way to give a route's OpenAPI path
-  context, and it's always combined with `path` (`prefix + path`,
-  translating this route's own `:name`/`:name?`/`:name(regex)` segments
-  to `{name}`) to produce the document path. Concretely, a hand-rolled
-  implementation's `docPath` is typically computed as exactly
-  `prefix + translated-path` via a string constant declared once per
-  file -- the original app's router files did exactly this before its
-  migration (e.g. `cartRouter.ts`'s `const cartDocPath =
-'/carts/{cart_id}'`, reused as `docPath: `${cartDocPath}/migrate``
-  alongside `path: '/:cart_id/migrate'`) -- so the conversion is
-  mechanical:
-  - If `docPath` is just `path` translated verbatim (no other router
-    mounted in front of it) -- delete the `docPath` line entirely, don't
-    add `prefix`. (Registering directly on `app`, or a router mounted at
-    the app's absolute root, needs nothing here.)
-  - Otherwise, replace that per-file `docPath` constant (e.g.
-    `cartDocPath`) with a `prefix` value of the same string, and pass
-    `prefix: cartDocPath` (or inline the string) on every `defineRoute`
-    call in that file instead of `docPath`. Delete the now-unused
-    `docPath` constant declarations (`cartDocPath`/`itemsDocPath`/
-    `itemDocPath`/etc.) once nothing references them.
-  - `noteRouter.ts`'s mergeParams-derived-param case (`cart_id`/
-    `item_id` from the parent mount, invisible to this router's own
-    relative `path`) converts the same way: its existing
-    `noteDocPath` constant -- already exactly `prefix + path`,
-    since `path` there is just `'/'` -- becomes the `prefix` value
-    directly; keep the existing `params` override (or add one) for
-    typing `req.params`, same as today.
-  - A registration that throws `resolves to an empty docPath` after this
-    conversion means a route ended up with neither a `prefix` nor a
-    non-root `path` -- give it one or the other.
-- **Schemas marked with `.id()`** (if the prototype's schemas use it) now
-  produce a real `$ref`/`components.schemas` entry instead of the shape
-  being inlined at every call site. If two different Joi schemas
-  accidentally reuse the same `.id()`, building the document now throws
-  immediately naming the collision, rather than silently documenting
-  whichever one happened to be seen first -- if that throws once you swap
-  in, it's surfacing a real pre-existing ambiguity, not a regression.
-- **`operationId`** no longer needs an explicit override just to avoid two
-  anonymous-handler routes colliding: an inline `handler: (req, res) =>
-{...}` (JS infers the property key `"handler"` as that function's own
-  name) used to mean every such route got the same, useless
-  `operationId: "handler"`. It's now either the handler's own real
-  function name, or -- when that's not usable -- a name derived from
-  method+docPath (e.g. `getWidgetsId`), so operationId collisions across
-  genuinely different routes should be rarer than they were, without
-  anything needing to change in the router files themselves.
-- **Validation failures no longer respond for you.** The library's
-  validators used to call `res.status(400).json(...)` directly; they now
-  forward Joi's own `ValidationError` via `next(error)` instead, so an
-  app's own error-handling middleware decides the response shape (see
-  "Validation error handling" above). An app with an existing app-wide
-  error handler (e.g. one already formatting every other thrown error into
-  a `{ code, msg }`-style envelope) adds one branch:
-  `if (cause instanceof ValidationError) { res.status(400).json(toYourShape(cause)); return; }`
-  -- an app with no such handler yet can just mount the provided
-  `validationErrorHandler` for the old `{ message, details }` shape. Either
-  way, this needs a real addition somewhere in the app; without one, a
-  validation failure falls through to Express's own default error handler
-  (a bare 500, not a 400) instead of silently keeping the old behavior.
+| Export                                          | Purpose                                                                                  |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `defineRoute(router, def)`                      | Register a route on the default registry                                                 |
+| `defineRoute.withResponses<Map>()(router, def)` | Same, with `res` checked against a status → body type map                                |
+| `routeRegistry`                                 | The default registry's routes                                                            |
+| `createRouteRegistry<Schemes>()`                | A separate `{ defineRoute, routeRegistry, buildOpenApiDocument }`                        |
+| `buildOpenApiDocument(routes, options)`         | Build the document (`title`, `version`, `servers`, `securitySchemes`, `commonResponses`) |
+| `createOpenApiRouter(options)`                  | Router serving the document at its mount path                                            |
+| `validationErrorHandler`                        | Error middleware responding `400` to validation failures                                 |
+| `securedBy(middleware, scheme)`                 | Tag middleware with the security scheme it enforces                                      |
+| `applyDiscriminatorMappings(schemas)`           | Add `discriminator.mapping` to discriminated unions                                      |
+| `pathToDocSegment(path)`                        | Convert an Express path to OpenAPI syntax (`/:id` → `/{id}`)                             |
+| `Provider<Locals>`, `ProviderLocals<T>`         | Types for middleware that sets `res.locals`                                              |
+| `RouteDef`, `OpenApiDocument`, `SecurityScheme` | Types                                                                                    |
+
+From `@mtrac/express-openapi-joi/typegen`: `applyGeneratedResponseSchemas`,
+`fileLooksLikeItUsesWithResponses`, and the lower-level `createFileProgram`
+and `generateResponseSchema`.
+
+Every `defineRoute` option is documented in its type, so your editor shows
+it on hover.
 
 ## Development
 
 ```bash
 nvm use
 npm install
-npm run build      # compiles dist/esm and dist/cjs
 npm run lint
-npm test
+npm test        # type-checks, then runs the tests with coverage
+npm run build   # writes dist/esm and dist/cjs
 ```
 
-### Dual ESM/CJS output
+The source is ESM, compiled twice: `tsconfig.esm.json` and
+`tsconfig.cjs.json` both extend `tsconfig.base.json`. `tsconfig.json` covers
+`src` and `test` for type-checking, linting and tests, and is not used for
+the build.
 
-The package is authored as ESM (`"type": "module"`) but is built twice —
-once for ESM consumers and once for CJS consumers — using separate
-`tsconfig.esm.json` / `tsconfig.cjs.json` projects that both extend the
-shared `tsconfig.base.json`. Source imports use explicit `.ts` extensions
-(e.g. `import { foo } from './foo.ts'`), rewritten to the right output
-extension per build via `rewriteRelativeImportExtensions`, so both the
-NodeNext (ESM) and Node10 (CJS) module resolution modes resolve and emit
-correctly from the same source tree. `npm run build` writes a
-`{"type":"commonjs"}` marker into `dist/cjs` so Node treats that output as
-CommonJS regardless of the package-level `"type": "module"`.
+## License
 
-`tsconfig.json` (the un-suffixed one) is not used for building — it's the
-project ESLint, editors, and Mocha (via `ts-node/esm`) type-check against,
-and it includes both `src` and `test`.
+MIT

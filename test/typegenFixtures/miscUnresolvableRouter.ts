@@ -10,9 +10,8 @@ export interface Thing {
 
 const router = express.Router();
 
-// prefix is an identifier reference to something NOT declared as a local
-// const in THIS file (it's imported) -- resolveStringExpression's
-// "identifier not found in constMap" branch.
+// `prefix` is an imported identifier, not a local constant, so it isn't in
+// constMap.
 defineRoute.withResponses<{ 200: Thing }>()(router, {
   method: 'get',
   path: '/',
@@ -24,9 +23,7 @@ defineRoute.withResponses<{ 200: Thing }>()(router, {
   },
 });
 
-// No `prefix` property at all -- getObjectLiteralStringProp's "prop not
-// found" branch, and resolveDocPathAndMethod's `prefix ?? ''` branch with
-// prefix genuinely absent, not just unresolvable.
+// No `prefix` property.
 defineRoute.withResponses<{ 200: Thing }>()(router, {
   method: 'get',
   path: '/no-prefix-at-all',
@@ -41,8 +38,7 @@ function computePath(): string {
   return '/computed';
 }
 
-// path itself can't be statically resolved -- resolveDocPathAndMethod's
-// `routePath === undefined` branch.
+// `path` can't be resolved.
 defineRoute.withResponses<{ 200: Thing }>()(router, {
   method: 'get',
   path: computePath(),
@@ -54,9 +50,7 @@ defineRoute.withResponses<{ 200: Thing }>()(router, {
   },
 });
 
-// A template expression whose OWN span isn't statically resolvable --
-// resolveStringExpression's template-expression branch, span-unresolvable
-// case.
+// A template literal with a span that can't be resolved.
 defineRoute.withResponses<{ 200: Thing }>()(router, {
   method: 'get',
   path: '/',
@@ -86,9 +80,7 @@ const routeDef: RouteDef<
   },
 };
 
-// The def argument isn't an inline object literal --
-// processWithResponsesCall's "defArg isn't an ObjectLiteralExpression"
-// branch.
+// `def` isn't an inline object literal.
 defineRoute.withResponses<{ 200: Thing }>()(router, routeDef);
 
 export default router;

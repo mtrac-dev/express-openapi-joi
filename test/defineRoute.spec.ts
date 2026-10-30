@@ -16,8 +16,7 @@ describe('UNIT: defineRoute', () => {
       path: '/:id',
       prefix: '/widgets',
       handler: (req, res) => {
-        // Compile-time check: req.params.id must type-check as string with
-        // no explicit Params generic, purely from the '/:id' path literal.
+        // Compile-time check: req.params.id is a string, inferred from '/:id'.
         const { id } = req.params;
         res.status(200).json({ id });
       },
@@ -51,7 +50,7 @@ describe('UNIT: defineRoute', () => {
     expect(res.body).to.eql({ id: 'abc' });
   });
 
-  it('validates the body against a Joi schema, matching bodyValidator behavior', async () => {
+  it('validates the body against a Joi schema', async () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     const schema = Joi.object<{ name: string }>({
@@ -82,7 +81,7 @@ describe('UNIT: defineRoute', () => {
     expect(invalid.statusCode).to.equal(400);
   });
 
-  it('runs validators before middleware, so a validation failure wins over a middleware that would otherwise short-circuit', async () => {
+  it('runs validators before middleware', async () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();
     const notFoundMiddleware: express.RequestHandler = (_req, res) => {
@@ -108,7 +107,7 @@ describe('UNIT: defineRoute', () => {
     expect(res.statusCode).to.equal(400);
   });
 
-  it('mergeParams-derived params not visible in the router-relative path can be typed via `params`, not a cast', async () => {
+  it('types params inherited through mergeParams with `params`', async () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router({ mergeParams: true });
 
@@ -118,9 +117,7 @@ describe('UNIT: defineRoute', () => {
       prefix: '/carts/{cartId}/items/{itemId}',
       params: ['cartId', 'itemId'] as const,
       handler: (req, res) => {
-        // '/' alone has nothing for ExtractRouteParams to find -- cartId/itemId
-        // come from the parent mount below, so `params` overrides inference
-        // instead of needing a cast.
+        // cartId and itemId come from the parent mount, so `params` types them.
         const { cartId, itemId } = req.params;
         res.status(200).json({ cartId, itemId });
       },
@@ -138,20 +135,14 @@ describe('UNIT: defineRoute', () => {
     });
   });
 
-  // Express 4's path-to-regexp accepted inline regex constraints
-  // (`:name(pattern)`) and a trailing `?` modifier directly in the path
-  // string; Express 5's router no longer parses either at all (it throws
-  // synchronously on registration, even for a bare `:name?`) -- newer
-  // syntax uses `{...}` optional groups instead. defineRoute's own
-  // pathToDocSegment translation still has to handle the legacy syntax
-  // for an Express-4 consumer, so these use a minimal stub router (just a
-  // recorded method call, not real path-to-regexp parsing) to test that
-  // translation without depending on which Express major is installed.
+  // Express 5 rejects `:name(pattern)` and `:name?` at registration, but
+  // pathToDocSegment still translates them for Express 4 apps. A stub router
+  // tests the translation with either Express version installed.
   function stubRouter(): express.Router {
     return { get: () => undefined } as unknown as express.Router;
   }
 
-  it('an inline regex-constrained param can be typed via `params`, not a cast', () => {
+  it('types a regex-constrained param with `params`', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
 
     defineRoute(stubRouter(), {
@@ -182,9 +173,7 @@ describe('UNIT: defineRoute', () => {
       },
     });
 
-    // Express's real modifier order is constraint-then-optional -- a
-    // regex matching `?` before the constraint group would leave a
-    // dangling, un-replaced `?` in the derived docPath.
+    // Express puts the constraint before the optional marker.
     expect(routeRegistry.at(-1)).to.include({ docPath: '/widgets/{slug}' });
   });
 
@@ -229,7 +218,7 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)).to.include({ docPath: '/widgets/{na*me}' });
   });
 
-  it('infers Locals from Provider<L> middleware, the same merging a provideAll()-style combinator does for the type system', async () => {
+  it('infers res.locals from Provider<L> middleware', async () => {
     const { defineRoute } = createRouteRegistry();
     const router = express.Router();
 
@@ -238,9 +227,7 @@ describe('UNIT: defineRoute', () => {
       res,
       next
     ) => {
-      // ParamsDictionary's index signature is `string | string[]` (Express
-      // supports repeated route params producing arrays); this route's
-      // `:id` is always a single segment.
+      // ParamsDictionary values are `string | string[]`; `:id` is one segment.
       res.locals.widget = { id: req.params.id as string };
       next();
     };
@@ -251,8 +238,7 @@ describe('UNIT: defineRoute', () => {
       prefix: '/widgets',
       middleware: [widgetProvider],
       handler: (req, res) => {
-        // Compile-time check: res.locals.widget type-checks with no cast,
-        // inferred purely from widgetProvider's Provider<{widget:...}> type.
+        // Compile-time check: res.locals.widget is typed from widgetProvider.
         const { widget } = res.locals;
         res.status(200).json(widget);
       },
@@ -336,7 +322,7 @@ describe('UNIT: defineRoute', () => {
     expect((await request.get('/widgets/not-a-uuid')).statusCode).to.equal(400);
   });
 
-  it("defaults operationId to the handler's own function name", () => {
+  it("defaults operationId to the handler's function name", () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
@@ -367,12 +353,10 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)).to.include({ operationId: 'listAllWidgets' });
   });
 
-  it('derives operationId from method+docPath for an anonymous handler with no explicit override', () => {
+  it('derives operationId from method and docPath for an anonymous handler', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
-    // Array indirection defeats JS's name inference for an anonymous
-    // function expression -- passed directly as `handler: (req, res) => {}`,
-    // it would otherwise infer the property key ("handler") as its name.
+    // Taking the function from an array keeps JS from naming it "handler".
     const [anonymousHandler] = [
       (_req: express.Request, res: express.Response) =>
         res.status(200).json([]),
@@ -388,13 +372,11 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)).to.include({ operationId: 'getWidgetsId' });
   });
 
-  it('derives operationId from method+docPath for a bare inline handler, rather than colliding every such route onto the inferred name "handler"', () => {
+  it('derives operationId from method and docPath for an inline handler', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
 
-    // The everyday call style used everywhere else in this file and the
-    // README -- JS infers the object property key itself ("handler") as
-    // this function's own .name, not a real function name.
+    // JS names an inline `handler: (req, res) => {}` "handler".
     defineRoute(router, {
       method: 'get',
       path: '/',
@@ -412,7 +394,7 @@ describe('UNIT: defineRoute', () => {
     expect(routeRegistry.at(-1)).to.include({ operationId: 'getGadgets' });
   });
 
-  it('derives a PascalCase docPath segment from a hyphenated path, keeping the derived operationId a valid identifier-like name', () => {
+  it('derives a PascalCase operationId segment from a hyphenated path', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
 
@@ -428,7 +410,7 @@ describe('UNIT: defineRoute', () => {
     });
   });
 
-  it('pushes the route definition into routeRegistry for later OpenAPI-document generation', () => {
+  it('pushes the route definition into routeRegistry', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry();
     const router = express.Router();
     defineRoute(router, {
@@ -467,7 +449,7 @@ describe('UNIT: defineRoute', () => {
     expect(doc.servers).to.eql([{ url: 'https://api.example.com' }]);
   });
 
-  it('gives each call its own isolated registry, not a shared singleton', () => {
+  it('gives each call its own registry', () => {
     const first = createRouteRegistry();
     const second = createRouteRegistry();
 
@@ -482,7 +464,7 @@ describe('UNIT: defineRoute', () => {
     expect(second.routeRegistry).to.have.lengthOf(0);
   });
 
-  it('narrows RouteDef.security to a caller-given closed union, via createRouteRegistry<TScheme>()', () => {
+  it('narrows RouteDef.security to the TScheme given to createRouteRegistry', () => {
     const { defineRoute, routeRegistry } = createRouteRegistry<
       'ApiKeyAuth' | 'BearerAuth'
     >();
@@ -492,21 +474,15 @@ describe('UNIT: defineRoute', () => {
       method: 'get',
       path: '/',
       prefix: '/widgets',
-      // Compile-time check: 'ApiKeyAuth' type-checks here because it's a
-      // member of this registry's own TScheme union -- a typo'd scheme
-      // name (e.g. 'ApiKeyAuht') would be a compile error, not silently
-      // accepted the way it is through the library's default,
-      // ungenericized createRouteRegistry() (every other test in this
-      // file uses that default, permissive form).
+      // Compile-time check: 'ApiKeyAuth' is in this registry's TScheme, so it's
+      // accepted; a typo would be a compile error.
       security: ['ApiKeyAuth'],
       handler: (_req, res) => res.status(200).json([]),
     });
 
     expect(routeRegistry.at(-1)?.security).to.eql(['ApiKeyAuth']);
 
-    // The same narrowing applies through the curried withResponses<>()
-    // entry point -- TScheme is closed over from this same registry, not
-    // re-specified at the withResponses<>() call.
+    // withResponses uses the same registry's TScheme.
     defineRoute.withResponses<{ 200: { id: string } }>()(router, {
       method: 'get',
       path: '/:id',
@@ -531,13 +507,11 @@ describe('UNIT: defineRoute', () => {
       prefix: '/widgets',
       handler: (req, res) => {
         if (req.params.id === 'missing') {
-          // Compile-time check: only { message: string } type-checks here,
-          // since this is the 404 branch of TypedRouteResponse's status().
+          // Compile-time check: the 404 body must be { message: string }.
           res.status(404).json({ message: 'not found' });
           return;
         }
-        // Compile-time check: only { id: string } type-checks here, the
-        // 200 branch.
+        // Compile-time check: the 200 body must be { id: string }.
         res.status(200).json({ id: req.params.id });
       },
     });

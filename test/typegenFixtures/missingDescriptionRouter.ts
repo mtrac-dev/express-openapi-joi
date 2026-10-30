@@ -12,9 +12,7 @@ export interface NotFoundBody {
 
 const router = express.Router();
 
-// Declares 404 in Responses but never documents it in `responses` --
-// applyGeneratedResponseSchemas should throw rather than invent a
-// description for it.
+// 404 is in the type argument but not in `responses`, so this throws.
 defineRoute.withResponses<{ 200: Found; 404: NotFoundBody }>()(router, {
   method: 'get',
   path: '/',

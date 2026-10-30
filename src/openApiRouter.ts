@@ -5,11 +5,22 @@ import { buildOpenApiDocument } from './document.ts';
 import type { AnyRouteDef } from './defineRoute.ts';
 
 /**
- * Serves a generated OpenAPI document at `GET /` -- mount this router
- * wherever the document should be exposed (e.g.
- * `app.use('/openapi.json', createOpenApiRouter({ title, version,
- * routeRegistry }))`). The document is built once and cached, not rebuilt
- * per request.
+ * Create a router that serves the OpenAPI document as JSON at its mount path.
+ *
+ * @remarks
+ * The document is built on the first request, then cached.
+ *
+ * @param options - The document's title and version, and the routes to
+ *   document.
+ * @returns An Express router, to mount with `app.use`.
+ *
+ * @example
+ * ```ts
+ * app.use(
+ *   '/openapi.json',
+ *   createOpenApiRouter({ title: 'Widgets API', version: '1.0.0', routeRegistry })
+ * );
+ * ```
  */
 export function createOpenApiRouter({
   title,
@@ -18,17 +29,19 @@ export function createOpenApiRouter({
   securitySchemes,
   middleware = [],
 }: {
+  /** The document's `info.title`. */
   title: string;
+  /** The document's `info.version`: the API's version. */
   version: string;
-  /** The registry returned by createRouteRegistry() (see ./defineRoute.ts). */
+  /** The routes to document: `routeRegistry`, or one from `createRouteRegistry()`. */
   routeRegistry: readonly AnyRouteDef[];
-  /** Embedded verbatim into the document's components.securitySchemes. */
+  /** Security schemes to add as-is to `components.securitySchemes`. */
   securitySchemes?: Record<string, SecuritySchemeObject>;
   /**
-   * Gates this route however the caller's own app gates any other
-   * internal endpoint (an API key check, an auth middleware, etc.) --
-   * this library doesn't assume anything about a caller's auth strategy,
-   * so there's no default here beyond leaving the route open.
+   * Middleware to run before the document is served, for example to require
+   * authentication.
+   *
+   * @defaultValue `[]`
    */
   middleware?: express.RequestHandler[];
 }) {
@@ -43,16 +56,9 @@ export function createOpenApiRouter({
       securitySchemes,
     });
 
-    // servers isn't part of the cached document: this library doesn't
-    // assume anything about a caller's own public base URL. req.baseUrl
-    // is the full mount path this router was reached through (cumulative
-    // across any nesting), since this route is registered at this
-    // router's own root ('/') -- so it's already exactly the base path
-    // this document is served under, with nothing of this router's own
-    // to strip back off. The Host header is mandatory on every real
-    // HTTP/1.1 request, so the `?? ''` fallback is unreachable in
-    // practice -- @types/express just can't express that req.get('host')
-    // is never actually undefined here.
+    // `servers` is computed per request from the Host header and req.baseUrl,
+    // the path this router is mounted at. Every HTTP/1.1 request has a Host
+    // header, so the `''` fallback is never used.
     /* c8 ignore next */
     const host = req.get('host') ?? '';
     const servers = [{ url: `${req.protocol}://${host}${req.baseUrl}` }];

@@ -1,38 +1,27 @@
-/**
- * A security scheme name, keyed into the `securitySchemes` map a caller
- * passes to buildOpenApiDocument (see ./document.ts) -- this library
- * doesn't define any schemes itself, since what a route is actually gated
- * by (a bearer token, an API key header, ...) is entirely up to the
- * consuming app.
- */
-// Kept as its own name for what it documents at each call site, not for
-// any structural distinction from `string`.
+/** The name of a security scheme in `components.securitySchemes`. */
+// An alias of `string` that names what the value is at each use.
 // eslint-disable-next-line sonarjs/redundant-type-aliases
 export type SecurityScheme = string;
 
 /**
- * `'public'` means "no security requirement" -- one alternative among
- * others, same as an empty `{}` entry in a real OpenAPI `security` array.
- * `(TScheme & {})` rather than bare `TScheme` keeps `'public'` visible as
- * its own literal in the union -- plain `TScheme | 'public'` collapses to
- * just `string` whenever `TScheme` itself is (or widens to) `string`,
- * since it already absorbs the `'public'` literal.
+ * One entry in a route's `security` list.
  *
- * Generic over `TScheme`, defaulting to the same permissive
- * `SecurityScheme` (`string`) this library has always used, so every
- * existing reference to the bare `SecurityRequirement`/
- * `SecurityRequirementObject` names -- including `mergeSecurity` below,
- * and every RouteDef not explicitly parameterized -- keeps meaning
- * exactly what it always has. A consumer with a small, fixed, real set of
- * scheme names can get real narrowing (a typo'd scheme name is a compile
- * error, not a silently-invalid OpenAPI document referencing a
- * `securitySchemes` entry that doesn't exist) by giving
- * `createRouteRegistry` its own closed union instead -- see
- * `createRouteRegistry`'s own doc comment in ./defineRoute.ts.
+ * @remarks
+ * A scheme name, or `'public'` when no credentials are needed. The document
+ * writes `'public'` as `{}`.
+ *
+ * @typeParam TScheme - The scheme names allowed.
  */
+// `TScheme & {}` keeps 'public' visible in editor hints; `TScheme | 'public'`
+// collapses to plain `string` when TScheme is `string`.
 export type SecurityRequirement<TScheme extends string = SecurityScheme> =
   'public' | (TScheme & {});
 
+/**
+ * An OpenAPI security requirement object, mapping scheme names to scopes.
+ *
+ * @typeParam TScheme - The scheme names allowed.
+ */
 export type SecurityRequirementObject<TScheme extends string = SecurityScheme> =
   Partial<Record<TScheme, string[]>>;
 
@@ -41,14 +30,21 @@ const SECURES_WITH = Symbol('securesWith');
 type TaggedMiddleware<T> = T & { [SECURES_WITH]?: SecurityScheme };
 
 /**
- * Tags a middleware/provider factory's returned function with the scheme
- * it enforces, so defineRoute can auto-populate `security` for any route
- * that uses it, without the router author restating it. Only worth doing
- * for middleware whose enforcement is a simple, fixed, one-shape check
- * (e.g. a static API-key header comparison) -- a middleware whose
- * behavior varies per call (roles, optional auth, ...) can't be
- * expressed by a single fixed tag; state `security` explicitly on the
- * route instead, the same way `operationId`/`docPath` sometimes do.
+ * Tag a middleware with the security scheme it enforces.
+ *
+ * @remarks
+ * Every route using the middleware then documents that scheme. Use it for
+ * middleware that always enforces one scheme; for conditional checks, set
+ * `security` on the route instead.
+ *
+ * @param fn - The middleware to tag.
+ * @param scheme - The scheme's name in `components.securitySchemes`.
+ * @returns `fn` itself, now tagged.
+ *
+ * @example
+ * ```ts
+ * const requireApiKey = securedBy(apiKeyMiddleware, 'ApiKeyAuth');
+ * ```
  */
 export function securedBy<T extends (...args: never[]) => unknown>(
   fn: T,
@@ -59,7 +55,12 @@ export function securedBy<T extends (...args: never[]) => unknown>(
   return tagged;
 }
 
-/** Reads back any schemes tagged via `securedBy` among a route's own middleware. */
+/**
+ * Get the schemes tagged with `securedBy` on a list of middleware.
+ *
+ * @param middleware - The middleware to inspect.
+ * @returns The tagged scheme names, in order.
+ */
 export function inferSecurity(
   middleware: readonly unknown[] = []
 ): SecurityScheme[] {
@@ -78,18 +79,11 @@ function toRequirementObject(
 }
 
 /**
- * Unions the security alternatives stated across every defineRoute
- * registration sharing one docPath+method (multiple registrations can
- * share a path+method when a route defers to a different handler per
- * caller) into one OpenAPI `security` array. Only what's explicitly
- * stated on each registration contributes -- a registration that states
- * nothing (most routes) contributes nothing, rather than being assumed
- * `public`, because "nothing stated" also covers routes gated by
- * something this module deliberately doesn't model as a security scheme
- * (a bespoke per-resource token check, say) -- assuming those are
- * `public` would misrepresent them as unauthenticated. A registration
- * that's genuinely open needs to say `security: ['public']` itself, same
- * as any other alternative.
+ * Add `security` entries to an OpenAPI security requirement list.
+ *
+ * @param existing - The current requirement list, if any.
+ * @param addition - The entries to add. `'public'` becomes `{}`.
+ * @returns A new list, without duplicates.
  */
 export function mergeSecurity(
   existing: SecurityRequirementObject[] | undefined,

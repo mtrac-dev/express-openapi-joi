@@ -32,13 +32,13 @@ describe('UNIT: createOpenApiRouter', () => {
     expect(res.body.paths).to.eql({});
   });
 
-  it('sets a Cache-Control header so repeat hits can be absorbed upstream', async () => {
+  it('sets a Cache-Control header', async () => {
     const res = await request.get('/openapi.json');
 
     expect(res.headers['cache-control']).to.equal('public, max-age=3600');
   });
 
-  it('derives servers from the actual incoming request, not a fixed config value', async () => {
+  it('derives servers from the incoming request', async () => {
     const res = await request.get('/openapi.json');
 
     expect(res.body.servers).to.have.lengthOf(1);
@@ -84,7 +84,7 @@ describe('UNIT: createOpenApiRouter', () => {
       })
     );
 
-    it("gates the route via the caller's own middleware, same as any other endpoint", async () => {
+    it('runs the given middleware before serving the document', async () => {
       const res = await testRequest(gatedApp).get('/openapi.json');
 
       expect(res.statusCode).to.equal(401);
@@ -148,8 +148,7 @@ describe('UNIT: createOpenApiRouter', () => {
         method: 'get',
         path: '/whatsits',
         summary: 'List whatsits',
-        // Not an object schema -- joi-to-json emits no `properties` key at
-        // all for this, exercising queryParameters' fallback for that case.
+        // Not an object schema, so it has no `properties`.
         request: { query: Joi.string() },
         handler: (_req, res) => res.status(200).json([]),
       });
@@ -157,8 +156,7 @@ describe('UNIT: createOpenApiRouter', () => {
         method: 'get',
         path: '/thingumbobs',
         summary: 'List thingumbobs',
-        // Nothing required -- joi-to-json emits no `required` key at all,
-        // exercising headerParameters' fallback for that case.
+        // Nothing required, so it has no `required`.
         request: {
           headers: Joi.object({ 'x-tenant': Joi.string() }).unknown(true),
         },
@@ -168,8 +166,7 @@ describe('UNIT: createOpenApiRouter', () => {
         method: 'get',
         path: '/dinguses',
         summary: 'List dinguses',
-        // Not an object schema -- exercises headerParameters' fallback for
-        // a schema with no `properties` key, same as /whatsits for query.
+        // Not an object schema, so it has no `properties`.
         request: { headers: Joi.string() },
         handler: (_req, res) => res.status(200).json([]),
       });
@@ -199,10 +196,8 @@ describe('UNIT: createOpenApiRouter', () => {
         method: 'get',
         path: '/widgets',
         summary: 'List widgets',
-        // 'public' registered BEFORE a real scheme -- the order gizmos
-        // (above) doesn't exercise, since 'public' merging with an
-        // already-real security array never collapses to just `[{}]`
-        // along the way.
+        // 'public' registered before a real scheme, so the merged security is
+        // `[{}]` after the first registration.
         security: ['public'],
         handler: (_req, res) => res.status(200).json([]),
       });
@@ -218,9 +213,7 @@ describe('UNIT: createOpenApiRouter', () => {
         path: '/thingamabobs',
         summary: 'List thingamabobs, as an admin',
         middleware: [apiKeyAuth],
-        // Documents a 403 not repeated by the registration below --
-        // should still show up in the merged operation, not just the
-        // 200 the last-registered one documents.
+        // The merged operation should keep this 403.
         responses: {
           200: { description: 'OK' },
           403: { description: 'Not an admin' },
@@ -267,10 +260,8 @@ describe('UNIT: createOpenApiRouter', () => {
         method: 'post',
         path: '/cogs',
         summary: 'Create a cog, as an admin',
-        // Same shape as the /cogs registration below, but with its fields
-        // declared in the opposite order -- two independently-constructed
-        // schemas that joi-to-json can emit with differently-ordered keys
-        // even though they describe the same shape.
+        // Same shape as the /cogs schema below, with the fields in the opposite
+        // order.
         request: {
           body: Joi.object({
             teeth: Joi.number().required(),
@@ -302,8 +293,7 @@ describe('UNIT: createOpenApiRouter', () => {
         method: 'get',
         path: '/knobs/:id',
         summary: 'Get a knob',
-        // Same param, same location, validated differently -- should
-        // document both, not silently keep only the first-seen schema.
+        // Same param and location with a different schema: document both.
         request: { params: Joi.object({ id: Joi.number().required() }) },
         handler: (_req, res) => res.status(200).json({}),
       });
@@ -319,7 +309,7 @@ describe('UNIT: createOpenApiRouter', () => {
       defineRoute(router, {
         method: 'get',
         path: '/doohickeys',
-        // No summary on this registration -- shouldn't erase the one above.
+        // No summary, so the one above is kept.
         request: {
           headers: Joi.object({ 'x-tenant': Joi.string().required() }).unknown(
             true
@@ -341,7 +331,7 @@ describe('UNIT: createOpenApiRouter', () => {
       );
     });
 
-    it('describes a path parameter using its own Joi schema, not a bare string fallback', async () => {
+    it('describes a path parameter with its Joi schema', async () => {
       const res = await testRequest(appWithRoutes).get('/openapi.json');
 
       const widgetPath = res.body.paths['/widgets/{id}'];
@@ -372,7 +362,7 @@ describe('UNIT: createOpenApiRouter', () => {
       ]);
     });
 
-    it('falls back to a bare string schema for a path param with no request.params schema, and emits a header parameter from request.headers', async () => {
+    it('uses a string schema for a path param without request.params, and emits header parameters', async () => {
       const res = await testRequest(appWithRoutes).get('/openapi.json');
 
       const doodadPath = res.body.paths['/doodads/{id}'];
@@ -464,7 +454,7 @@ describe('UNIT: createOpenApiRouter', () => {
       ]);
     });
 
-    it("keeps an earlier 'public' alternative when a later registration in the same docPath+method stack requires a real scheme", async () => {
+    it("keeps an earlier 'public' alternative when a later registration requires a scheme", async () => {
       const res = await testRequest(appWithRoutes).get('/openapi.json');
 
       expect(res.body.paths['/widgets'].get.security).to.have.deep.members([
@@ -492,7 +482,7 @@ describe('UNIT: createOpenApiRouter', () => {
       );
     });
 
-    it('wraps requestBody in oneOf when a shared docPath+method validates genuinely different schemas', async () => {
+    it('wraps requestBody in oneOf when a shared docPath+method validates different schemas', async () => {
       const res = await testRequest(appWithRoutes).get('/openapi.json');
 
       const { schema } =
@@ -603,7 +593,7 @@ describe('UNIT: createOpenApiRouter', () => {
       });
     });
 
-    it("dereferences a header schema whose whole wrapper is id'd back to its own properties", async () => {
+    it('reads the properties of a header schema that has an .id()', async () => {
       const { defineRoute, routeRegistry } = createRouteRegistry();
       const router = express.Router();
       const headers = Joi.object({
@@ -718,7 +708,7 @@ describe('UNIT: createOpenApiRouter', () => {
       expect(fullDoc.paths['/internal-only']).to.exist;
     });
 
-    it('narrows a shared docPath+method down to just its own non-private branch when filtered', () => {
+    it('keeps only the non-private registration of a shared docPath+method when filtered', () => {
       const { defineRoute, routeRegistry } = createRouteRegistry();
       const router = express.Router();
       defineRoute(router, {
@@ -746,9 +736,8 @@ describe('UNIT: createOpenApiRouter', () => {
       const op = publicDoc.paths['/mixed'].get;
 
       expect(op?.summary).to.equal('Public branch');
-      // Merged down to only `[{}]` ("public") once the InternalAuth branch
-      // is filtered out -- omitted entirely by the same isOnlyPublic
-      // optimization a route with no private branch at all already gets.
+      // Only `[{}]` is left once the InternalAuth registration is filtered out,
+      // so `security` is omitted.
       expect(op?.security).to.be.undefined;
     });
   });
@@ -759,7 +748,7 @@ describe('UNIT: createOpenApiRouter', () => {
       500: { description: 'common server error' },
     };
 
-    it('merges into a route with no responses of its own, without fabricating a success status', () => {
+    it('merges into a route with no responses, without adding a success status', () => {
       const { defineRoute, buildOpenApiDocument } = createRouteRegistry();
       const router = express.Router();
       defineRoute(router, {
@@ -777,12 +766,7 @@ describe('UNIT: createOpenApiRouter', () => {
       });
       const responses = doc.paths['/common-responses-a'].get?.responses;
 
-      // No 200 -- a route that never says what it returns shouldn't have
-      // one invented for it (that's exactly the assumption that broke a
-      // real generated client the one time a route's real success status
-      // wasn't 200: a fabricated, schema-less 200 sat next to the real,
-      // schema'd status, and the client generator picked the fabricated
-      // one).
+      // No 200: a route that doesn't document a success status doesn't get one.
       expect(responses?.['200']).to.be.undefined;
 
       expect(responses?.['404']).to.eql({ description: 'common not found' });
@@ -823,7 +807,7 @@ describe('UNIT: createOpenApiRouter', () => {
 });
 
 describe('UNIT: applyDiscriminatorMappings', () => {
-  it("derives a discriminator mapping from each oneOf variant's own `const` property", () => {
+  it("derives a discriminator mapping from each variant's `const` property", () => {
     const componentSchemas = {
       Shape: {
         discriminator: { propertyName: 'kind' },
@@ -851,7 +835,7 @@ describe('UNIT: applyDiscriminatorMappings', () => {
     });
   });
 
-  it("derives a discriminator mapping from a variant's own single-value `enum` property", () => {
+  it('derives a discriminator mapping from a single-value `enum` property', () => {
     const componentSchemas = {
       Shape: {
         discriminator: { propertyName: 'kind' },
@@ -905,7 +889,7 @@ describe('UNIT: applyDiscriminatorMappings', () => {
     }).to.throw(/has a non-\$ref oneOf entry/);
   });
 
-  it("throws when a variant doesn't narrow its own discriminator property to a single string literal", () => {
+  it("throws when a variant's discriminator property isn't a single string literal", () => {
     const componentSchemas = {
       Shape: {
         discriminator: { propertyName: 'kind' },

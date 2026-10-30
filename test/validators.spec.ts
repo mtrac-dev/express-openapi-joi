@@ -112,7 +112,7 @@ describe('UNIT: validators', () => {
   });
 
   describe('a consumer-supplied error handler', () => {
-    it("can check `instanceof ValidationError` (re-exported from 'joi') for its own response shape", async () => {
+    it('can check `instanceof ValidationError` to send its own response', async () => {
       const schema = Joi.object<{ name: string }>({
         name: Joi.string().required(),
       });

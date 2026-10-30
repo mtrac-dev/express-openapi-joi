@@ -4,11 +4,8 @@ import { expect } from 'chai';
 import { defineRoute, routeRegistry } from '../src/globalRegistry.ts';
 
 describe('UNIT: global defineRoute/routeRegistry', () => {
-  // routeRegistry here is the library's one process-wide instance -- unlike
-  // every other spec file (each of which builds its own isolated registry
-  // via createRouteRegistry()), truncate back to the length recorded before
-  // this test, not to zero, so this doesn't leak into whichever other spec
-  // file runs next.
+  // The global registry is shared across spec files, so restore its length
+  // after the test instead of emptying it.
   let initialLength: number;
   beforeEach(() => {
     initialLength = routeRegistry.length;

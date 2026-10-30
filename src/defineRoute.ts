@@ -16,13 +16,12 @@ import {
 } from './security.ts';
 
 /**
- * Extracts `:name` segments from an Express path STRING literal type into a
- * params object type -- the same trick Hono uses internally for path-param
- * inference. Only works for string literal paths. Two cases it can't see:
- * a route mounted via a RegExp path, or one whose params come from a
- * parent router's mergeParams mount rather than this router's own
- * relative path. For either, pass `params` explicitly (see below) instead
- * of relying on inference here.
+ * The `req.params` type for an Express path literal, read from its `:name`
+ * segments.
+ *
+ * @remarks
+ * Only string literal paths can be read. A route mounted with a RegExp path,
+ * or one that inherits params through `mergeParams`, needs `params` instead.
  */
 type ExtractRouteParams<Path extends string> =
   Path extends `${string}:${infer Param}/${infer Rest}`
@@ -36,10 +35,8 @@ type ParamsFromNames<Names extends readonly string[]> = Record<
   string
 >;
 
-// Checked against an empty tuple, not `undefined` -- `undefined extends T`
-// can be true for surprisingly many T under a loose tsconfig, which would
-// make an `undefined`-based check here unreliable across consumers with
-// different strictness settings.
+// Compare with an empty tuple, not `undefined`: under a loose tsconfig,
+// `undefined extends T` is true for most T.
 type ResolvedParams<
   Path extends string,
   ParamNames extends readonly string[],
@@ -49,28 +46,20 @@ type ResolvedParams<
 
 type InferJoi<S> = S extends Schema<infer T> ? T : never;
 
-// Sentinel for "no typed responses declared" -- checked as `keyof Responses
-// extends never`, not `Responses extends undefined`, for the same reason
-// ResolvedParams above checks ParamNames against an empty tuple instead of
-// undefined: `undefined extends T` is true for nearly any T under a loose
-// (consumer-side) tsconfig, which would make an undefined-based check
-// unreliable regardless of how strict this library's own build is.
-// eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- deliberate: an intentional sentinel, not an accidental `{}`
+// The default `Responses`, for routes with no response types. Detect it with
+// `keyof Responses extends never`, not `undefined`, for the same reason as
+// ResolvedParams.
+// eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- an empty sentinel type
 type EmptyResponses = Record<never, never>;
 
 /**
- * A response-map-narrowed facade over Express's real `res`. Express's own
- * `Response<ResBody>.status(code)` returns the same `Response<ResBody>`
- * regardless of `code` -- there's no built-in way to tie a specific status
- * literal to its own body shape. Here, `.status(code)` instead returns an
- * object whose `json`/`send` only accept that literal status's own response
- * type, so e.g. `res.status(200).json(...)` and `res.status(401).json(...)`
- * are checked against different shapes from the same `ResponseMap`. This
- * only narrows when `code` is a number LITERAL at the call site (as it
- * always is in practice -- `res.status(200)`, never a computed variable);
- * a computed status code isn't assignable to `S extends keyof ResponseMap`
- * and falls back to the same union every bare `res.json(...)` (with no
- * `.status()` call at all) already accepts.
+ * Express's `res`, with `status(code)` narrowed to the body type mapped to
+ * `code`.
+ *
+ * @remarks
+ * `res.status(200).json(body)` accepts only the 200 body type. A status that
+ * isn't a number literal, or a bare `res.json(body)`, accepts any of the
+ * mapped body types.
  */
 type TypedRouteResponse<
   ResponseMap extends Record<number, unknown>,
@@ -105,13 +94,9 @@ type RouteHandler<
       Locals
     >
   : (
-      // A plain `void` return type here, not `void | Promise<void>` -- same
-      // as express.RequestHandler's own call signature. TS's "void-
-      // returning function type accepts an implementation returning
-      // anything" rule only fires against a literal `void` target;
-      // `Promise<void>` is compared structurally instead, which would
-      // reject an async handler here (it returns `res.json(...)`'s own
-      // Response, wrapped in the Promise the `async` keyword adds).
+      // `void`, like express.RequestHandler: a `void` return type accepts an
+      // async handler, but `void | Promise<void>` rejects one that returns
+      // `res.json(...)`.
       req: express.Request<
         ResolvedParams<Path, ParamNames>,
         unknown,
@@ -124,21 +109,23 @@ type RouteHandler<
     ) => void;
 
 /**
- * Translates this route's own `:name`/`:name?`/`:name(regex)` segments into
- * OpenAPI's `{name}` placeholder syntax, for deriving `docPath` from
- * `prefix + path` instead of restating the whole absolute path by hand.
+ * Convert an Express route path to OpenAPI path syntax.
  *
- * Exported (not just used internally) so a consumer's own static analysis
- * of its route files -- e.g. a build-time response-schema generator that
- * needs to resolve the same `docPath` a `prefix`-based defineRoute call
- * will produce at runtime, from its own reading of the source AST -- can
- * reuse this exact translation instead of a second, maybe-drifting copy.
+ * @remarks
+ * Use this in tooling that needs the same document paths `defineRoute`
+ * produces.
+ *
+ * @param path - An Express path, such as `/:id` or `/:id(\d+)?`.
+ * @returns The path with each param written as `{name}`, or `''` for `/`.
+ *
+ * @example
+ * ```ts
+ * pathToDocSegment('/:cartId/items/:itemId?'); // '/{cartId}/items/{itemId}'
+ * ```
  */
 export function pathToDocSegment(path: string): string {
-  // Express's real modifier order is constraint-then-optional
-  // (`:name(pattern)?`), not the reverse -- matching `?` before the
-  // constraint group would leave a dangling, un-replaced `?` in the
-  // output for a segment that's both constrained and optional.
+  // Express puts the constraint before the optional marker, as in
+  // `:name(pattern)?`, so match them in that order.
   return path === '/' ? '' : path.replace(/:(\w+)(?:\([^)]*\))?\??/g, '{$1}');
 }
 
@@ -152,19 +139,30 @@ function toPascalSegment(segment: string): string {
 }
 
 /**
- * Fallback operationId for when neither an explicit one nor a usable
- * handler name is available -- built from method + docPath so the
- * operation still gets a deterministic, meaningful name instead of
- * nothing at all, which just pushes the job onto whatever a generated
- * client's own fallback does (the "much less usable" shape
- * RouteDef.operationId's own JSDoc already warns about, e.g.
- * `widgetsIdPost`).
+ * Build an operationId from the method and document path, such as
+ * `getWidgetsId` for `GET /widgets/{id}`.
+ *
+ * @remarks
+ * Used when a route has neither an `operationId` nor a named handler.
  */
 function deriveOperationId(method: string, docPath: string): string {
   const segments = docPath.split('/').filter(Boolean).map(toPascalSegment);
   return [method, ...segments].join('');
 }
 
+/**
+ * The options for `defineRoute`: how to register the route, and what to
+ * document about it.
+ *
+ * @typeParam Path - The `path` literal, used to type `req.params`.
+ * @typeParam Locals - The `res.locals` type, inferred from `middleware`.
+ * @typeParam Body - The `request.body` schema, used to type `req.body`.
+ * @typeParam Query - The `request.query` schema, used to type `req.query`.
+ * @typeParam ParamNames - The `params` names, when given.
+ * @typeParam Responses - The map of status codes to body types, from
+ *   `defineRoute.withResponses`.
+ * @typeParam TScheme - The scheme names allowed in `security`.
+ */
 export interface RouteDef<
   Path extends string,
   Locals extends object,
@@ -174,147 +172,111 @@ export interface RouteDef<
   Responses extends Record<number, unknown> = EmptyResponses,
   TScheme extends string = SecurityScheme,
 > {
+  /** The HTTP method. */
   method: 'get' | 'post' | 'put' | 'patch' | 'delete';
-  /** Path as passed to `router[method]` -- relative to wherever this router is mounted. */
+  /**
+   * The route path, as passed to `router[method]`, relative to where the router
+   * is mounted.
+   */
   path: Path;
   /**
-   * This router's absolute mount prefix, already using OpenAPI's `{name}`
-   * placeholder syntax for any params in the prefix itself (e.g.
-   * `/carts/{cartId}/items/{itemId}` for a mergeParams-derived parent
-   * param that doesn't appear in this router's own relative `path` at
-   * all) -- the OpenAPI document's path for this route is always `prefix +
-   * path` (translating this route's own `:name`/`:name?`/`:name(regex)`
-   * segments to `{name}`). Omit it for a route registered directly on
-   * `app`, or on a router mounted at the absolute root -- there, `path`
-   * alone is already the full path.
+   * The path the router is mounted at, in OpenAPI syntax, such as
+   * `/carts/{cartId}/items`.
+   *
+   * @remarks
+   * The documented path is `prefix + path`. Omit it for routes on `app` or on a
+   * router mounted at `/`.
    */
   prefix?: string;
   /**
-   * OpenAPI operationId -- generated clients (openapi-generator-cli's
-   * typescript-fetch, in particular) name their methods from this. Falls
-   * back, in order: (1) `handler`'s own function name, EXCEPT the literal
-   * name `"handler"` (see below); (2) method + docPath (e.g. `GET
-   * /widgets/{id}` -> `getWidgetsId`) when neither of those is usable.
-   * Only needed explicitly when a handler is shared across registrations
-   * that want different operationIds, or to get a nicer name than the
-   * method+docPath fallback produces.
+   * The OpenAPI operationId, which client generators use as the method name.
    *
-   * The `"handler"` exclusion exists because a bare
-   * `handler: (req, res) => {...}` (the everyday call style, including
-   * everywhere else in this file's own examples) is NOT anonymous to JS --
-   * an arrow function assigned directly as an object property infers that
-   * property's own key, `"handler"`, as the function's `.name`. Without
-   * this exclusion, every route defined that way would collide onto the
-   * literal operationId `"handler"`. A handler assigned some OTHER way
-   * that happens to infer a different name (e.g. a plain object's `get:`
-   * method rather than `handler:`) isn't covered by this one check and
-   * would fall through to it as if it were a real, intentional name.
+   * @remarks
+   * Uniqueness isn't checked.
    *
-   * None of this is checked for uniqueness across registrations --
-   * reusing the same named handler function (or the same explicit
-   * operationId) for two actually-different operations produces a
-   * document with a duplicate operationId, same as it always has; that's
-   * on the caller, not something defineRoute guards against.
+   * @defaultValue
+   * The handler's function name. For an inline `handler: (req, res) => ...`, a
+   * name built from the method and path: `GET /widgets/{id}` becomes
+   * `getWidgetsId`.
    */
   operationId?: string;
+  /** A one-line summary of the operation. */
   summary?: string;
+  /** Tags for grouping the operation in documentation tools. */
   tags?: string[];
-  /** Runtime Joi validation, same as bodyValidator/etc. today. */
+  /**
+   * Joi schemas to validate the request against, before `middleware` and
+   * `handler` run.
+   *
+   * @remarks
+   * `body` and `query` are replaced with the validated value, including
+   * defaults and conversions. `params` and `headers` are only checked. A failed
+   * check calls `next(err)` with Joi's `ValidationError`.
+   */
   request?: { body?: Body; query?: Query; params?: Schema; headers?: Schema };
   /**
-   * `schema` is a plain JSON Schema object, not Joi -- unlike request
-   * validation, none of today's response shapes have a runtime (Joi)
-   * schema to convert, so there's nothing to derive this from
-   * automatically. Without it, a generated client's method has no
-   * response type to deserialize into and just discards the body
-   * (returns void) -- only needed for a route whose callers actually
-   * read the response body.
+   * The responses to document, keyed by status code.
    *
-   * Leaving this out entirely means no success status is documented at
-   * all, not a fabricated one -- buildOpenApiDocument doesn't assume every
-   * undocumented route is a schema-less 200. Assuming that broke a real
-   * generated client the one time a route's actual success status wasn't
-   * 200: a fabricated, schema-less 200 sat next to that route's real,
-   * schema'd status, and the client generator picked the fabricated one.
-   *
-   * Not yet tied to `Responses` below -- `schema` here is still hand-
-   * written JSON Schema, while `Responses` (via `defineRoute.withResponses`)
-   * only drives compile-time checking of `handler` itself today.
-   * `description` is always hand-written either way; it's not something a
-   * TS type carries.
+   * @remarks
+   * `schema` is a JSON Schema object for the response body. When `responses` is
+   * omitted, no responses are documented; a 200 isn't assumed.
    */
   responses?: Record<
     number,
     { description: string; schema?: Record<string, unknown> }
   >;
   /**
-   * Explicit path param names, for paths ExtractRouteParams can't infer
-   * from the string literal alone: an inline regex constraint
-   * (`:name(...)`), an optional segment (`:name?`), or a param that comes
-   * from a parent router's mergeParams mount rather than this router's
-   * own relative path. Overrides inference the same way `operationId` can
-   * be stated explicitly instead of relying on the handler's function
-   * name. Needs `as const` at the call site (e.g. `['cartId', 'itemId']
-   * as const`) for TypeScript to see it as a literal tuple rather than
-   * plain `string[]`.
+   * The names of the path params, for typing `req.params` when they can't be
+   * inferred from `path`.
+   *
+   * @remarks
+   * Needed for params inherited through `mergeParams`, and for segments with
+   * a modifier, such as `:id?` or `:id(\d+)`. Pass the list `as const`.
+   *
+   * @example
+   * ```ts
+   * params: ['cartId', 'itemId'] as const,
+   * ```
    */
   params?: ParamNames;
   /**
-   * Which of this route's alternatives satisfy access, as OpenAPI would
-   * describe it -- e.g. `['ApiKeyAuth']` (a key required), `['ApiKeyAuth',
-   * 'public']` (optional), or `['public']` (a registration with no gate
-   * of its own). Merged across every registration sharing a
-   * docPath+method, not overwritten, since later branches often accept
-   * different alternatives than the first. Middleware tagged via
-   * `securedBy` (see ./security.ts) contributes to this automatically;
-   * state it explicitly for anything else, the same way
-   * `operationId`/`params` sometimes need to be. A route gated by
-   * something deliberately not modeled as a security scheme should state
-   * nothing at all, rather than claim `public` -- leaving `security`
-   * unstated is how "this axis isn't documented" gets represented,
-   * distinct from "verified open".
+   * The security schemes that grant access, any one of which is enough.
+   *
+   * @remarks
+   * Use `'public'` for "no credentials" as one of the options, as in
+   * `['ApiKeyAuth', 'public']`. Schemes tagged on `middleware` with `securedBy`
+   * are added automatically. Leave it unset if the route's access check isn't a
+   * documented scheme; unset isn't the same as `['public']`.
    */
   security?: SecurityRequirement<TScheme>[];
   /**
-   * Marks this registration as internal-only -- excluded from a "public"
-   * document while still included in a "full" one, for a caller that wants
-   * to build and serve both from the same registry (e.g.
-   * `buildOpenApiDocument(routeRegistry.filter((r) => !r.private), {...})`
-   * for the public one). Not read by anything in this module itself --
-   * filtering happens on the raw `routeRegistry` array a caller passes to
-   * `buildOpenApiDocument`, before its own docPath+method merging runs, so
-   * a docPath+method with more than one registration (e.g. a role-gated
-   * route falling through to a different handler per caller) is filtered
-   * PER REGISTRATION, not merged: the public document only picks up
-   * whichever of that stack's own branches aren't private, documenting
-   * just those branches' own parameters/security, the same way it
-   * naturally would if the private branches didn't exist at all. A stack
-   * with no non-private branch is absent from the public document
-   * entirely, not just missing security.
+   * Whether the route is internal.
    *
-   * Stated explicitly here, not inferred from `security` -- the two are
-   * conceptually different (e.g. a route gated entirely by an API
-   * gateway's own access control, with no Express-side `security` to infer
-   * "private" from at all).
+   * @remarks
+   * The library doesn't act on this. Filter on it to build a public document.
+   *
+   * @example
+   * ```ts
+   * buildOpenApiDocument(routeRegistry.filter((r) => !r.private), options);
+   * ```
    */
   private?: boolean;
   /**
-   * Same providers you'd pass to a provideAll()-style combinator today --
-   * `Locals` is inferred from their combined Provider<L> type, so
-   * res.locals is typed in `handler` without restating it. A plain
-   * express.RequestHandler[] (not Provider<L>[]) still works, but Locals
-   * then can't be inferred from it -- res.locals stays untyped in
-   * `handler` unless you cast it there.
+   * Middleware to run after validation and before `handler`.
+   *
+   * @remarks
+   * When they're typed as `Provider<Locals>`, `res.locals` in `handler` is
+   * typed from them.
    */
   middleware?: Provider<Locals>[] | express.RequestHandler[];
+  /** The route handler, with `req` and `res` typed from the other options. */
   handler: RouteHandler<Path, ParamNames, Body, Query, Locals, Responses>;
 }
 
-// docPath doesn't exist on RouteDef at all -- it's always derived from
-// prefix+path (see defineRoute below) and resolved to a real string by
-// the time defineRoute pushes an entry into routeRegistry. Added here so
-// document.ts can read it directly, rather than every reader having to
-// re-derive it from prefix+path itself.
+/**
+ * A registered route: a `RouteDef` plus the `docPath` that `defineRoute`
+ * computes from `prefix` and `path`.
+ */
 export type AnyRouteDef = RouteDef<
   string,
   object,
@@ -325,49 +287,53 @@ export type AnyRouteDef = RouteDef<
 > & { docPath: string };
 
 /**
- * Creates an independent route registry and a `defineRoute` bound to it --
- * a fresh instance per call, not a module-level singleton, so a consumer
- * embedding this in a larger process (or a test) can keep its own registry
- * isolated instead of sharing some other part of the same process's
- * instance. buildOpenApiDocument is bound to the same registry, so a
- * caller never has to pass it explicitly.
+ * Create a route registry with its own `defineRoute` and
+ * `buildOpenApiDocument`.
  *
- * `TScheme` narrows every `defineRoute` call made through the returned
- * function's own `security` field from the library's default, permissive
- * `SecurityScheme` (`string`) down to a consumer's own closed set of real
- * scheme names -- e.g. `createRouteRegistry<'ApiKeyAuth' |
- * 'BearerAuth'>()` -- so a typo'd scheme name is a compile error
- * instead of a silently-invalid OpenAPI document (a `security` entry
- * referencing a name absent from `components.securitySchemes`, only ever
- * discovered downstream -- generated-client time, spec-validation time --
- * far from where the typo was actually written). Given once, at registry
- * creation, rather than per `defineRoute` call: there's nothing in an
- * individual call for TScheme to be inferred from, and repeating it at
- * every call site would undo the point of narrowing it at all. Defaults
- * to `SecurityScheme` so every existing caller -- including the default,
- * ungenericized `defineRoute`/`routeRegistry` this module also exports --
- * keeps exactly today's behavior unless it opts in.
+ * @remarks
+ * Use it instead of the default `defineRoute` and `routeRegistry` exports
+ * when you need separate registries, for example one per test.
  *
- * Only narrows `security`'s own type; `securedBy`'s `scheme` parameter
- * (./security.ts) stays `SecurityScheme` regardless -- tagging middleware
- * is comparatively rare next to writing `security: [...]` on a route, and
- * narrowing it too would mean returning a `TScheme`-bound `securedBy`
- * alongside `defineRoute`/`routeRegistry` here, a bigger addition to this
- * function's own surface than the gap actually calls for today.
+ * @typeParam TScheme - The scheme names allowed in `security`. Narrow it to
+ *   make a misspelled scheme a compile error. It doesn't apply to
+ *   `securedBy`.
+ * @returns The registry's `defineRoute`, its `routeRegistry` array, and a
+ *   `buildOpenApiDocument` that takes only the document options.
+ *
+ * @example
+ * ```ts
+ * const { defineRoute, routeRegistry, buildOpenApiDocument } =
+ *   createRouteRegistry<'ApiKeyAuth' | 'BearerAuth'>();
+ * ```
  */
 export function createRouteRegistry<TScheme extends string = SecurityScheme>() {
   const routeRegistry: AnyRouteDef[] = [];
 
   /**
-   * Registers a route (and its schemas) in one call -- both the real
-   * Express registration and the metadata buildOpenApiDocument reads back
-   * from routeRegistry.
+   * Register a route on `router`, and record it for the OpenAPI document.
    *
-   * Takes `express.IRouter`, not `express.Router` -- the interface both
-   * `Router` and `Application` actually extend, so this works identically
-   * whether routes are declared on a per-feature router or directly on
-   * `app` for a project that doesn't split routes into separate router
-   * files at all.
+   * @remarks
+   * Validation for `def.request` runs first, then `def.middleware`, then
+   * `def.handler`.
+   *
+   * @param router - The `Router` or `app` to register the route on.
+   * @param def - The route definition.
+   *
+   * @throws Error
+   * Thrown if `prefix + path` is empty, or if the path contains a `*`
+   * wildcard, which OpenAPI can't express.
+   *
+   * @example
+   * ```ts
+   * defineRoute(router, {
+   *   method: 'get',
+   *   path: '/:id',
+   *   prefix: '/widgets',
+   *   handler: (req, res) => {
+   *     res.json({ id: req.params.id });
+   *   },
+   * });
+   * ```
    */
   function defineRoute<
     Path extends string,
@@ -382,34 +348,19 @@ export function createRouteRegistry<TScheme extends string = SecurityScheme>() {
   ) {
     const docPath = `${def.prefix ?? ''}${pathToDocSegment(def.path)}`;
     if (docPath === '') {
-      // Only reachable with no `prefix` and a bare `path: '/'` -- e.g. a
-      // route registered directly on `app`'s own root with nothing else
-      // to give the OpenAPI document a real path.
+      // Happens only with no `prefix` and `path: '/'`.
       throw new Error(
         `defineRoute: ${def.method.toUpperCase()} ${def.path} resolves to an empty docPath -- pass \`prefix\`, or use a non-root \`path\``
       );
     }
-    // A bare `handler: (req, res) => {...}` (the call style used
-    // everywhere else in this file's own examples) isn't anonymous to
-    // JS -- it infers the object property key itself, "handler", as the
-    // function's own `.name`. Treating that one specific inferred name as
-    // if it were still anonymous is what keeps every route defined that
-    // way from colliding onto the literal operationId "handler"; see the
-    // caveat on RouteDef.operationId's own JSDoc for what this doesn't
-    // cover. Falling all the way through to deriveOperationId (rather
-    // than leaving operationId undefined) means a generated client still
-    // gets a real, meaningful method name instead of inventing its own.
+    // JS names an inline `handler: (req, res) => {...}` "handler". Ignore that
+    // name so inline handlers don't all get the operationId "handler".
     const inferredName = def.handler.name !== 'handler' ? def.handler.name : '';
     const operationId =
       def.operationId ??
       (inferredName || deriveOperationId(def.method, docPath));
-    // A bare `*` (Express's wildcard-segment syntax) outside a `{name}`
-    // placeholder has no OpenAPI equivalent -- a generated client would
-    // send the literal character `*` in the URL, which can never match
-    // the real route. Routes that need Express's own wildcard matching
-    // aren't representable here; register them directly on `router`
-    // instead of through defineRoute, outside the documented surface.
-    // Bounded negated-class quantifier -- no backtracking ambiguity.
+    // A `*` wildcard has no OpenAPI equivalent: a generated client would send a
+    // literal `*`. Bounded negated-class quantifier, so no backtracking.
     // eslint-disable-next-line sonarjs/super-linear-regex
     if (docPath.replace(/\{[^}]*\}/g, '').includes('*')) {
       throw new Error(
@@ -435,15 +386,10 @@ export function createRouteRegistry<TScheme extends string = SecurityScheme>() {
       def.request?.body && bodyValidator(def.request.body),
     ].filter((mw): mw is express.RequestHandler => Boolean(mw));
 
-    // def.method is a union, so TS can't resolve a specific router.get/post/...
-    // overload here -- the real type-safety is at the defineRoute call site
-    // (handler is checked against Locals/Body/Query there); this dispatch is
-    // just plumbing, and Express's runtime behavior is identical regardless
-    // of which named method registered the handler. Must stay a method call
-    // (router[def.method](...)), not a detached reference -- Express's router
-    // methods rely on `this`, which a standalone reference loses. Validators
-    // run before middleware -- fail fast on malformed input before any
-    // resource-provider I/O -- not the other way around.
+    // def.method is a union, so no single router method overload applies; the
+    // handler's types were already checked at the call site. Call it as a
+    // method, since Express's router methods use `this`. Validators run before
+    // middleware, so bad input is rejected before any provider does I/O.
     const dynamicRouter = router as unknown as Record<
       string,
       (...args: unknown[]) => void
@@ -457,27 +403,36 @@ export function createRouteRegistry<TScheme extends string = SecurityScheme>() {
   }
 
   /**
-   * Opt-in compile-time response checking: pins `Responses` for one
-   * `defineRoute` call, e.g.
-   * `defineRoute.withResponses<{ 200: Found; 401: Unauthorized }>()(router, {...})`.
-   * Every route not using this keeps working exactly as it does without
-   * it -- `Responses` defaults to `EmptyResponses`, `handler` stays a
-   * plain `express.RequestHandler`, nothing about this changes existing
-   * behavior.
+   * Get a `defineRoute` that checks `handler`'s responses against a map of
+   * status codes to body types.
    *
-   * Not a plain `defineRoute<Responses>(...)` call, because TypeScript
-   * stops inferring EVERY trailing type parameter the moment any explicit
-   * type argument is given -- confirmed directly: giving `Responses`
-   * explicitly as defineRoute's first parameter silently discarded real
-   * inference for Path/Body/Query too, falling back to their bare
-   * defaults instead (a required `query: Schema<...>` argument resolved
-   * to `undefined`, with no error at the call site -- only surfaced once
-   * something tried to use it). Currying works around this: this call has
-   * nothing else to infer, so `Responses` is safe to pass explicitly; the
-   * function it returns is a fresh generic call with zero explicit type
-   * arguments, where Path/Locals/Body/Query/ParamNames all go back to
-   * inferring normally from `def`, same as every other defineRoute call
-   * today.
+   * @remarks
+   * `res.status(200).json(body)` then only accepts the type mapped to 200. The
+   * check is compile-time only; to document the bodies, use
+   * `applyGeneratedResponseSchemas` from the `/typegen` entry point.
+   *
+   * It's curried so the route's other types are still inferred from `def`.
+   * Passing a type argument to `defineRoute` itself would turn that inference
+   * off.
+   *
+   * @typeParam Responses - The map of status codes to body types.
+   * @returns A function that takes the same arguments as `defineRoute`.
+   *
+   * @example
+   * ```ts
+   * defineRoute.withResponses<{ 200: Widget; 404: NotFound }>()(router, {
+   *   method: 'get',
+   *   path: '/:id',
+   *   prefix: '/widgets',
+   *   responses: {
+   *     200: { description: 'The widget' },
+   *     404: { description: 'Not found' },
+   *   },
+   *   handler: (req, res) => {
+   *     res.status(200).json(getWidget(req.params.id));
+   *   },
+   * });
+   * ```
    */
   defineRoute.withResponses =
     <Responses extends Record<number, unknown>>() =>
