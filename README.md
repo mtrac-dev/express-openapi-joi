@@ -397,11 +397,7 @@ applyGeneratedResponseSchemas(
 
 // Optional: add discriminator.mapping to generated discriminated unions,
 // so generated clients can tell the variants apart.
-applyDiscriminatorMappings(
-  document.components.schemas as Parameters<
-    typeof applyDiscriminatorMappings
-  >[0]
-);
+applyDiscriminatorMappings(document.components.schemas);
 ```
 
 It reads TypeScript source, so run it where your sources and `tsconfig.json`

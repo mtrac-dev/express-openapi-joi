@@ -923,4 +923,36 @@ describe('UNIT: applyDiscriminatorMappings', () => {
       /doesn't narrow its own 'kind' property to a single string literal/
     );
   });
+
+  it("accepts a built document's components.schemas", () => {
+    const document = buildOpenApiDocument([], {
+      title: 'test-api',
+      version: '1.0.0',
+    });
+    document.components.schemas = {
+      Shape: {
+        discriminator: { propertyName: 'kind' },
+        oneOf: [{ $ref: '#/components/schemas/Circle' }],
+      },
+      Circle: { type: 'object', properties: { kind: { const: 'circle' } } },
+      ShapeAlias: { $ref: '#/components/schemas/Shape' },
+    };
+
+    // Compile-time check: no cast needed.
+    applyDiscriminatorMappings(document.components.schemas);
+
+    expect(document.components.schemas.Shape).to.have.nested.property(
+      'discriminator.mapping.circle',
+      '#/components/schemas/Circle'
+    );
+    expect(document.components.schemas.ShapeAlias).to.eql({
+      $ref: '#/components/schemas/Shape',
+    });
+  });
+
+  it('does nothing when components.schemas is undefined', () => {
+    expect(() => {
+      applyDiscriminatorMappings(undefined);
+    }).not.to.throw();
+  });
 });

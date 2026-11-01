@@ -1,4 +1,5 @@
 import joiToJsonImport from 'joi-to-json';
+import { isReferenceObject } from 'openapi3-ts/oas31';
 import type {
   ComponentsObject,
   OpenAPIObject,
@@ -151,6 +152,24 @@ export function mergeComponentSchema(
 const COMPONENT_SCHEMA_REF_RE = /^#\/components\/schemas\/(.+)$/;
 
 /**
+ * Get the single value a schema allows through `const` or a one-value
+ * `enum`.
+ *
+ * @returns The value, or `undefined` if the schema allows more than one.
+ */
+function singleLiteralValue(schema: SchemaObject | undefined): unknown {
+  // SchemaObject types `const` and `enum` as `any`.
+  const constValue = schema?.const as unknown;
+  const enumValues = schema?.enum as unknown[] | undefined;
+  return (
+    constValue ??
+    (Array.isArray(enumValues) && enumValues.length === 1
+      ? enumValues[0]
+      : undefined)
+  );
+}
+
+/**
  * Fill in `discriminator.mapping` on discriminated unions that don't have
  * one.
  *
@@ -160,18 +179,27 @@ const COMPONENT_SCHEMA_REF_RE = /^#\/components\/schemas\/(.+)$/;
  * from TypeScript types that have a `discriminator` JSDoc tag.
  *
  * @param componentSchemas - The document's `components.schemas`, updated in
- *   place.
+ *   place. `$ref` entries are skipped, and `undefined` is a no-op.
  *
  * @throws Error
  * Thrown if a variant isn't a `$ref` to a component schema, or if its
  * discriminator property isn't a single string literal, such as a `const`
  * or a one-value `enum`.
+ *
+ * @example
+ * ```ts
+ * applyDiscriminatorMappings(document.components.schemas);
+ * ```
  */
 export function applyDiscriminatorMappings(
-  componentSchemas: Record<string, SchemaObject>
+  componentSchemas: ComponentsObject['schemas']
 ): void {
+  if (!componentSchemas) {
+    return;
+  }
   for (const [schemaName, schema] of Object.entries(componentSchemas)) {
     if (
+      isReferenceObject(schema) ||
       !schema.discriminator ||
       schema.discriminator.mapping ||
       !Array.isArray(schema.oneOf)
@@ -192,16 +220,9 @@ export function applyDiscriminatorMappings(
       const [, variantName] = match;
       const variantSchema = componentSchemas[variantName] as
         SchemaObject | undefined;
-      const propSchema = variantSchema?.properties?.[propertyName] as
-        SchemaObject | undefined;
-      // SchemaObject types `const` and `enum` as `any`.
-      const constValue = propSchema?.const as unknown;
-      const enumValues = propSchema?.enum as unknown[] | undefined;
-      const literalValue =
-        constValue ??
-        (Array.isArray(enumValues) && enumValues.length === 1
-          ? enumValues[0]
-          : undefined);
+      const literalValue = singleLiteralValue(
+        variantSchema?.properties?.[propertyName] as SchemaObject | undefined
+      );
       if (typeof literalValue !== 'string') {
         throw new Error(
           `applyDiscriminatorMappings: '${schemaName}''s variant '${variantName}' doesn't narrow its own '${propertyName}' property to a single string literal -- can't derive a discriminator mapping entry for it.`
