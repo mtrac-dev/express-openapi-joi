@@ -26,6 +26,7 @@ export function createOpenApiRouter({
   title,
   version,
   routeRegistry,
+  servers,
   securitySchemes,
   middleware = [],
 }: {
@@ -35,6 +36,12 @@ export function createOpenApiRouter({
   version: string;
   /** The routes to document: `routeRegistry`, or one from `createRouteRegistry()`. */
   routeRegistry: readonly AnyRouteDef[];
+  /**
+   * URLs for the document's `servers` list.
+   *
+   * @defaultValue The request's origin, such as `https://api.example.com`.
+   */
+  servers?: string[];
   /** Security schemes to add as-is to `components.securitySchemes`. */
   securitySchemes?: Record<string, SecuritySchemeObject>;
   /**
@@ -53,18 +60,26 @@ export function createOpenApiRouter({
     cachedDocument ??= buildOpenApiDocument(routeRegistry, {
       title,
       version,
+      servers,
       securitySchemes,
     });
 
-    // `servers` is computed per request from the Host header and req.baseUrl,
-    // the path this router is mounted at. Every HTTP/1.1 request has a Host
-    // header, so the `''` fallback is never used.
+    res.set('Cache-Control', 'public, max-age=3600');
+    if (servers) {
+      res.status(200).json(cachedDocument);
+      return;
+    }
+
+    // Default to the request's origin. Document paths include each route's
+    // prefix, so they're relative to the app root, not this router's mount
+    // path. Every HTTP/1.1 request has a Host header, so the `''` fallback is
+    // never used.
     /* c8 ignore next */
     const host = req.get('host') ?? '';
-    const servers = [{ url: `${req.protocol}://${host}${req.baseUrl}` }];
-
-    res.set('Cache-Control', 'public, max-age=3600');
-    res.status(200).json({ ...cachedDocument, servers });
+    res.status(200).json({
+      ...cachedDocument,
+      servers: [{ url: `${req.protocol}://${host}` }],
+    });
   });
 
   return router;

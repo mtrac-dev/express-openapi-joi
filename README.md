@@ -87,6 +87,21 @@ app.listen(3000);
 `GET /openapi.json` now serves the document, built once on first request and
 cached.
 
+The document's `servers` defaults to the request's origin, such as
+`http://localhost:3000`. Pass `servers` to set it yourself:
+
+```ts
+createOpenApiRouter({
+  title: 'Widgets API',
+  version: '1.0.0',
+  routeRegistry,
+  servers: ['https://api.example.com'],
+});
+```
+
+Behind a proxy that terminates TLS, set `app.set('trust proxy', true)` so the
+default uses `https`.
+
 `defineRoute` and `routeRegistry` are bound to a default, process-wide
 registry. For a separate registry (one per test, or several APIs in one
 process), create your own:

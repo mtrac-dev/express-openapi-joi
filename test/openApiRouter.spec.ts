@@ -38,13 +38,33 @@ describe('UNIT: createOpenApiRouter', () => {
     expect(res.headers['cache-control']).to.equal('public, max-age=3600');
   });
 
-  it('derives servers from the incoming request', async () => {
+  it("defaults servers to the request's origin", async () => {
     const res = await request.get('/openapi.json');
 
     expect(res.body.servers).to.have.lengthOf(1);
-    expect(res.body.servers[0].url).to.match(
-      /^http:\/\/127\.0\.0\.1:\d+\/openapi\.json$/
+    expect(res.body.servers[0].url).to.match(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  describe('with servers', () => {
+    const serversApp = express();
+    serversApp.use(
+      '/openapi.json',
+      createOpenApiRouter({
+        title: 'test-api',
+        version: '1.0.0',
+        routeRegistry: [],
+        servers: ['https://api.example.com', 'https://staging.example.com'],
+      })
     );
+
+    it('uses the given servers', async () => {
+      const res = await testRequest(serversApp).get('/openapi.json');
+
+      expect(res.body.servers).to.eql([
+        { url: 'https://api.example.com' },
+        { url: 'https://staging.example.com' },
+      ]);
+    });
   });
 
   describe('when mounted under a further prefix', () => {
@@ -60,12 +80,10 @@ describe('UNIT: createOpenApiRouter', () => {
     );
     nestedApp.use('/v1', outerRouter);
 
-    it("includes the full cumulative mount path in servers' url", async () => {
+    it("leaves the mount path out of servers' url", async () => {
       const res = await testRequest(nestedApp).get('/v1/openapi.json');
 
-      expect(res.body.servers[0].url).to.match(
-        /^http:\/\/127\.0\.0\.1:\d+\/v1\/openapi\.json$/
-      );
+      expect(res.body.servers[0].url).to.match(/^http:\/\/127\.0\.0\.1:\d+$/);
     });
   });
 
