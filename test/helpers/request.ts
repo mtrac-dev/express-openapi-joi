@@ -18,5 +18,5 @@ export interface TestRequest {
 }
 
 export function testRequest(app: Application): TestRequest {
-  return supertest(app) as unknown as TestRequest;
+  return supertest(app);
 }
