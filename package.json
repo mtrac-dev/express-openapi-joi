@@ -1,6 +1,6 @@
 {
   "name": "@mtrac/express-openapi-joi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generate OpenAPI documents from Express routes validated with Joi",
   "type": "module",
   "main": "./dist/cjs/index.js",
